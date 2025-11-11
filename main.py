@@ -1,0 +1,3140 @@
+from flask import Flask, render_template, session, request, redirect, flash, url_for
+from flask_socketio import SocketIO, emit, join_room, leave_room
+import secrets
+import string
+import random
+import time
+import json
+import os
+import math
+import datetime
+from game_combat import (
+    ENEMY_CONFIG, PLAYER_BASE_SPEED, SPEED_MULTIPLIER,
+    spawn_enemies, update_enemies, check_enemy_player_collisions,
+    check_bullet_enemy_collisions, check_victory_defeat, process_game_tick
+)
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600
+
+# 初始化 SocketIO，确保正确配置
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    manage_session=True,  # 启用Session管理，确保Socket事件中的Session修改被保存
+    async_mode='threading',  # 使用线程模式
+    logger=False,  # 关闭详细日志
+    engineio_logger=False,  # 关闭引擎日志
+    ping_timeout=60,  # ping超时时间
+    ping_interval=25  # ping间隔
+)
+
+# 存储所有房间信息
+rooms = {}
+
+# 用户数据文件路径
+USER_DATA_FILE = 'user_data.json'
+
+# 角色列表
+CHARACTERS = ['公主蓉', '王子栗', '幺幺俊羊羊', '勇者', '星耀犊']
+COLOR_VARIANTS = [1, 2, 3]
+
+# 角色属性配置
+CHARACTER_ATTRIBUTES = {
+    '勇者': '物理系',
+    '幺幺俊羊羊': '物理系',
+    '公主蓉': '自然系',
+    '星耀犊': '超能系',
+    '王子栗': '无属性'
+}
+
+# 装备套装配置
+EQUIPMENT_SETS = {
+    '世间真理的传授者': {
+        'weapon': '量天尺',
+        'accessory': '拂尘巾',
+        'headwear': '诵音筒',
+        'name': '世间真理的传授者',
+        'effects': {
+            'critRate': 0.20,  # 暴击率提高20%
+            'crit_cooldown_reduction': True  # 暴击时技能冷却减少1秒（每3秒最多一次）
+        }
+    },
+    '黑色狭窄的小巷': {
+        'weapon': '采访麦克风',
+        'accessory': '洗脸巾',
+        'headwear': '黑色面膜',
+        'name': '黑色狭窄的小巷',
+        'effects': {
+            'attack_bonus': 0.50,  # 攻击力提高50%
+            'attribute_power_conditional': 100  # 攻击力>150时额外+100属性强度
+        }
+    },
+    '愿这一轮朝阳照亮明天': {
+        'weapon': '寂明灯',
+        'accessory': '虹气结',
+        'headwear': '胡桃藤',
+        'name': '愿这一轮朝阳照亮明天',
+        'effects': {
+            'hp_bonus': 0.50,  # 生命值提高50%
+            'healingBonus': 0.30  # 治疗加成提高30%
+        }
+    }
+}
+
+# 装备主词条配置
+EQUIPMENT_MAIN_STATS = {
+    'weapon': [
+        {'name': '暴击率', 'value': 0.30, 'type': 'percent'},
+        {'name': '暴击伤害', 'value': 0.60, 'type': 'percent'},
+        {'name': '额外弹容', 'value': 0.20, 'type': 'percent'},
+        {'name': '攻击力', 'value': 0.30, 'type': 'percent'},
+        {'name': '生命值', 'value': 0.30, 'type': 'percent'},
+        {'name': '属性强度', 'value': 50, 'type': 'flat'}
+    ],
+    'accessory': [
+        {'name': '伤害加成', 'value': 0.25, 'type': 'percent'},
+        {'name': '治疗加成', 'value': 0.20, 'type': 'percent'},
+        {'name': '攻击力', 'value': 0.30, 'type': 'percent'},
+        {'name': '生命值', 'value': 0.25, 'type': 'percent'},
+        {'name': '属性强度', 'value': 50, 'type': 'flat'}
+    ],
+    'headwear': [
+        {'name': '攻击力', 'value': 0.30, 'type': 'percent'},
+        {'name': '生命值', 'value': 0.25, 'type': 'percent'},
+        {'name': '快速射击', 'value': 0.20, 'type': 'time'},
+        {'name': '换弹减免', 'value': 0.25, 'type': 'time'},
+        {'name': '属性强度', 'value': 50, 'type': 'flat'}
+    ]
+}
+
+# 装备副词条配置
+EQUIPMENT_SUB_STATS = [
+    {'name': '暴击率', 'min': 0.025, 'max': 0.05, 'type': 'percent'},
+    {'name': '暴击伤害', 'min': 0.05, 'max': 0.10, 'type': 'percent'},
+    {'name': '换弹减免', 'min': 0.05, 'max': 0.10, 'type': 'time'},
+    {'name': '攻击力', 'min': 0.05, 'max': 0.10, 'type': 'percent'},
+    {'name': '生命值', 'min': 0.04, 'max': 0.08, 'type': 'percent'},
+    {'name': '属性强度', 'min': 5, 'max': 10, 'type': 'flat'}
+]
+
+# 武器配置
+WEAPONS = {
+    3: [  # 三星武器
+        '精致冲锋枪', '精致手炮', '破烂法书', '玩具水枪', '精致左轮',
+        '海蓝导师', '海蓝斗士', '海蓝舞者', '海蓝先锋', '海蓝贤者'
+    ],
+    4: [  # 四星武器
+        '直音拟态寐', '焦心虑', '毒苹果汁', '龙炎脉冲', '冰霜冲击枪',
+        '星月断念天', '伪消防火炮', '无限放射波', '金鸣器-煞毙', '机械连射兵'
+    ],
+    5: [  # 五星武器
+        '万世封卷系列', '轰鸣炮-救星临', '红富士', '圣堂加冕', '莎与礼的誓约'
+    ]
+}
+
+# 角色技能说明
+CHARACTER_SKILLS = {
+    '勇者': {
+        '左键': {
+            'name': '左轮射击',
+            'description': '发射普通左轮子弹，伤害500+攻击力，射击间隔0.7秒，弹夹容量6发，换弹时间1.2秒',
+            'cooldown': '无'
+        },
+        'Q': {
+            'name': '击破射击',
+            'description': '发射一枚穿透性子弹，伤害3000+攻击力，大小比普通子弹大100%，可穿透敌人，碰到地图边界会向最近敌人弹射一次，被击中的敌人将被禁锢3秒。充能：每秒1%，每次普通子弹命中敌人+3%',
+            'cooldown': '充能制（100%）'
+        },
+        'E': {
+            'name': '强化射击',
+            'description': '激活后持续10秒，立即填满子弹。期间子弹可弹射一次，暴击率提高50%。冷却8秒',
+            'cooldown': '8秒'
+        },
+        '右键': {
+            'name': '快速连射',
+            'description': '将当前剩余的所有子弹一次性快速全部打出。子弹伤害为左键的70%。换弹时无法使用',
+            'cooldown': '无'
+        },
+        '被动': {
+            'name': '赏金猎人',
+            'description': '当暴击率超过100%时，根据超出的部分获得双倍的暴击伤害加成'
+        }
+    },
+    '公主蓉': {
+        '左键': {
+            'name': '四连发射击',
+            'description': '每次射击4发连续。每次4连发需要间隔1秒。每颗子弹造成50+（公主蓉生命值上限的5%）点伤害，若击中队友则造成20+（公主蓉生命值上限的1%）点治疗。子弹速度42，弹容60，换弹时间2.1秒',
+            'cooldown': '无'
+        },
+        'Q': {
+            'name': '微笑拂晓约定',
+            'description': '展开一个半径800的圆形光环，范围内的队友每秒恢复200点生命值，敌人每秒收到1000点伤害。持续期间内公主蓉为无敌状态。持续8秒。充能：每秒恢复5%',
+            'cooldown': '充能制（100%）'
+        },
+        'E': {
+            'name': '火力优化',
+            'description': '每次4连射改为8连射，连射射击间隔改为0.05秒（并非开枪的间隔）。持续8秒，冷却10秒',
+            'cooldown': '10秒'
+        },
+        '右键': {
+            'name': '锁定射击',
+            'description': '点击右键后进入激活状态，激活状态下会开始锁定界面上的所有队友和敌人，在1秒后完成锁定并向所有锁定目标都发射粉色桃心炮弹，被击中的敌人将收到800+（公主蓉生命值上限的10%）点伤害，队友获得100+（公主蓉生命值上限的1%）点治疗。冷却8秒',
+            'cooldown': '8秒'
+        }
+    },
+    '王子栗': {
+        '左键': {
+            'name': '火炮弹',
+            'description': '发射一枚火炮弹，击中敌人后会造成200+攻击力的命中伤害，然后爆炸，造成范围伤害，伤害为500+攻击力。发射间隔1.5秒，有后坐力，弹夹容量6发，换弹时间2.5秒',
+            'cooldown': '无'
+        },
+        'Q': {
+            'name': '再创世',
+            'description': '激活后，击碎屏幕并定格敌人，随后释放创世白光，对所有敌人造成5次伤害，每次伤害为1000+攻击力。充能：每秒3%，左键每次命中敌人时恢复2%',
+            'cooldown': '充能制（100%）'
+        },
+        'E': {
+            'name': '重生',
+            'description': '当任意队友阵亡时，会在原处留下一个黄色的灵魂球。存在灵魂球时，E技能变为可使用状态。按下E技能后，将该队友在灵魂球的位置复活。冷却20秒',
+            'cooldown': '20秒（需要灵魂球）'
+        },
+        '右键': {
+            'name': '净灭射线',
+            'description': '发射一道光束，持续0.6秒，对接触到光束的敌人造成1000+攻击力点伤害，有后坐力。冷却时间5秒',
+            'cooldown': '5秒'
+        },
+        '被动': {
+            'name': '救世主',
+            'description': '对物理/自然/超能属性的敌人造成伤害时，该伤害转变为克制敌人的属性'
+        }
+    },
+    '幺幺俊羊羊': {
+        '左键': {
+            'name': '你吃苹果不？',
+            'description': '发射苹果子弹，命中敌人时将击退敌人并造成800+（幺幺俊羊羊攻击力）点的伤害，命中队友时治疗40+（幺幺俊羊羊攻击力）点生命值。射击间隔1.5秒，弹容15，子弹速度为33，换弹时间1.78秒',
+            'cooldown': '无'
+        },
+        'Q': {
+            'name': '巨大苹果',
+            'description': '按下Q激活技能，在准星位置会出现巨大苹果的虚影。点击左键在虚影位置生成巨大苹果实体，点击右键取消。巨大苹果放置时弹开敌人并造成1000+（幺幺俊羊羊攻击力）点伤害，存在6秒，每秒对所有玩家治疗100+（幺幺俊羊羊攻击力）点生命值，6秒后爆炸对所有敌人造成5000+（幺幺俊羊羊攻击力）点伤害。充能：每秒1%，每次发射苹果击中敌人恢复5%',
+            'cooldown': '充能制（100%）'
+        },
+        'E': {
+            'name': '毒苹果',
+            'description': '按下E激活技能，在准星位置会出现毒苹果的虚影。点击左键在虚影位置生成毒苹果实体，点击右键取消。毒苹果使界面上的所有敌人移动速度降低20%，并且受到苹果子弹攻击后会进入中毒状态，每隔0.3秒受到300+（幺幺俊羊羊攻击力）点伤害。中毒效果持续到毒苹果消失。毒苹果持续8秒后爆炸，对所有敌人造成2000+（幺幺俊羊羊攻击力）点伤害。',
+            'cooldown': '8秒'
+        },
+        '右键': {
+            'name': '泡泡盾',
+            'description': '选择一名玩家赋予泡泡盾，该玩家在三秒内处于无敌状态并在此期间获得100点属性强度。冷却8秒',
+            'cooldown': '8秒'
+        }
+    },
+    '星耀犊': {
+        '左键': {
+            'name': '音符治疗',
+            'description': '发射一枚音符，不会造成伤害，会穿过敌人，击中玩家时回复10+(星耀犊生命值上限的1%)点生命值。可以长按鼠标左键进行蓄力，至多2秒，蓄力后的音符造成的治疗量会提高（根据蓄力时间提高蓄力秒数*20点）。射击间隔1秒，弹容20发，换弹时间2秒。治疗可以暴击。',
+            'cooldown': '无'
+        },
+        'Q': {
+            'name': '聚合光束',
+            'description': '发射一道聚合光束，持续4秒。光束每0.3秒判定一次，对敌人造成400点伤害，对玩家治疗120点生命值。基础暴击率50%，可叠加角色暴击率。暴击时光束宽度45，非暴击35。激活期间每秒恢复50生命值。充能：每秒1%，每次左键治疗命中玩家+2%，音爆触发+2%',
+            'cooldown': '充能制（100%）'
+        },
+        'E': {
+            'name': '强化增幅',
+            'description': '激活后持续10秒，期间星耀犊获得200点属性强度和20%治疗加成。冷却8秒',
+            'cooldown': '8秒'
+        },
+        '右键': {
+            'name': '尖刺发射',
+            'description': '按住右键持续发射尖刺，每0.075秒发射一枚，伤害50+（星耀犊攻击力）点。最多发射80枚后进入3秒冷却。尖刺命中敌人5次后触发音爆，造成300点伤害。',
+            'cooldown': '3秒（发射80枚后）'
+        }
+    }
+}
+
+# 加载用户数据
+def load_user_data():
+    """从文件加载用户数据"""
+    if os.path.exists(USER_DATA_FILE):
+        try:
+            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"加载用户数据失败: {e}")
+            return {}
+    return {}
+
+# 保存用户数据
+def save_user_data(data):
+    """保存用户数据到文件"""
+    try:
+        with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"保存用户数据失败: {e}")
+        return False
+
+# 检测套装
+def detect_set_bonus(equipment_dict, all_equipment):
+    """检测角色是否装备了完整套装"""
+    equipped_items = {
+        'weapon': None,
+        'accessory': None,
+        'headwear': None
+    }
+    
+    # 获取已装备的物品
+    for slot in ['weapon', 'accessory', 'headwear']:
+        equipment_id = equipment_dict.get(slot)
+        if equipment_id:
+            equipped_items[slot] = next((eq for eq in all_equipment if eq['id'] == equipment_id), None)
+    
+    # 检查每个套装
+    for set_name, set_config in EQUIPMENT_SETS.items():
+        weapon_match = equipped_items['weapon'] and equipped_items['weapon']['name'] == set_config['weapon']
+        accessory_match = equipped_items['accessory'] and equipped_items['accessory']['name'] == set_config['accessory']
+        headwear_match = equipped_items['headwear'] and equipped_items['headwear']['name'] == set_config['headwear']
+        
+        if weapon_match and accessory_match and headwear_match:
+            return set_config
+    
+    return None
+
+# 应用单个属性
+def apply_stat_to_stats(stats, stat_name, stat_value, stat_type):
+    """应用单个属性到stats字典"""
+    if stat_name == '攻击力':
+        if stat_type == 'percent':
+            stats['attack'] = stats.get('attack', 0) * (1 + stat_value)
+        else:
+            stats['attack'] = stats.get('attack', 0) + stat_value
+    elif stat_name == '生命值':
+        if stat_type == 'percent':
+            stats['hp'] = stats.get('hp', 1000) * (1 + stat_value)
+        else:
+            stats['hp'] = stats.get('hp', 1000) + stat_value
+    elif stat_name == '暴击率':
+        stats['critRate'] = stats.get('critRate', 0.0) + stat_value
+    elif stat_name == '暴击伤害':
+        stats['critDamage'] = stats.get('critDamage', 1.0) + stat_value
+    elif stat_name == '伤害加成':
+        stats['damageBonus'] = stats.get('damageBonus', 0.0) + stat_value
+    elif stat_name == '治疗加成':
+        stats['healingBonus'] = stats.get('healingBonus', 0.0) + stat_value
+    elif stat_name == '换弹减免':
+        stats['reloadReduction'] = stats.get('reloadReduction', 0.0) + stat_value
+    elif stat_name == '快速射击':
+        stats['rapidFire'] = stats.get('rapidFire', 0.0) + stat_value
+    elif stat_name == '额外弹容':
+        stats['extraAmmo'] = stats.get('extraAmmo', 0.0) + stat_value
+    elif stat_name == '属性强度':
+        stats['attributePower'] = stats.get('attributePower', 0) + stat_value
+
+# 应用角色被动技能（服务器端）
+def apply_passive_skills_server(stats, character_name):
+    """应用角色被动技能（服务器端版本）"""
+    final_stats = stats.copy()
+    
+    # 公主蓉的被动：根据治疗加成获得等额暴击率
+    if character_name == '公主蓉':
+        healing_bonus = final_stats.get('healingBonus', 0.0)
+        final_stats['critRate'] = final_stats.get('critRate', 0.0) + healing_bonus
+    
+    # 幺幺俊羊羊的被动：当自身最终的攻击力面板超过100点，则提高50%暴击率
+    if character_name == '幺幺俊羊羊':
+        attack = final_stats.get('attack', 0)
+        if attack > 100:
+            final_stats['critRate'] = final_stats.get('critRate', 0.0) + 0.5
+    
+    # 勇者的被动：当暴击率超过100%时，根据超出的部分获得双倍的暴击伤害加成
+    if character_name == '勇者':
+        crit_rate = final_stats.get('critRate', 0.0)
+        if crit_rate > 1.0:  # 超过100%
+            excess_crit_rate = crit_rate - 1.0  # 超出的部分
+            # 超出的部分转换为双倍的暴击伤害加成
+            crit_damage_bonus = excess_crit_rate * 2.0
+            final_stats['critDamage'] = final_stats.get('critDamage', 1.0) + crit_damage_bonus
+    
+    return final_stats
+
+# 计算装备属性加成（服务器端）
+def calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, character_name=None):
+    """计算装备属性加成（服务器端版本）"""
+    stats = base_stats.copy()
+    
+    # 保存基础攻击力和生命值（用于百分比加成计算）
+    base_attack = stats.get('attack', 0)
+    base_hp = stats.get('hp', 1000)
+    
+    # 收集所有百分比加成和固定值加成
+    attack_percent_bonuses = []  # 攻击力百分比加成列表
+    hp_percent_bonuses = []  # 生命值百分比加成列表
+    attack_flat_bonuses = []  # 攻击力固定值加成列表
+    hp_flat_bonuses = []  # 生命值固定值加成列表
+    
+    # 遍历三个装备槽位
+    for slot in ['weapon', 'accessory', 'headwear']:
+        equipment_id = equipment_dict.get(slot)
+        if not equipment_id:
+            continue
+        
+        equip = next((eq for eq in all_equipment if eq['id'] == equipment_id), None)
+        if not equip:
+            continue
+        
+        # 收集主词条
+        if 'mainStat' in equip:
+            main_stat = equip['mainStat']
+            if main_stat['name'] == '攻击力':
+                if main_stat['type'] == 'percent':
+                    attack_percent_bonuses.append(main_stat['value'])
+                else:
+                    attack_flat_bonuses.append(main_stat['value'])
+            elif main_stat['name'] == '生命值':
+                if main_stat['type'] == 'percent':
+                    hp_percent_bonuses.append(main_stat['value'])
+                else:
+                    hp_flat_bonuses.append(main_stat['value'])
+            else:
+                # 其他属性直接应用
+                apply_stat_to_stats(stats, main_stat['name'], main_stat['value'], main_stat['type'])
+        
+        # 收集副词条
+        if 'subStats' in equip:
+            for sub_stat in equip['subStats']:
+                if sub_stat['name'] == '攻击力':
+                    if sub_stat['type'] == 'percent':
+                        attack_percent_bonuses.append(sub_stat['value'])
+                    else:
+                        attack_flat_bonuses.append(sub_stat['value'])
+                elif sub_stat['name'] == '生命值':
+                    if sub_stat['type'] == 'percent':
+                        hp_percent_bonuses.append(sub_stat['value'])
+                    else:
+                        hp_flat_bonuses.append(sub_stat['value'])
+                else:
+                    # 其他属性直接应用
+                    apply_stat_to_stats(stats, sub_stat['name'], sub_stat['value'], sub_stat['type'])
+    
+    # 检测并收集套装效果的百分比加成
+    set_bonus = detect_set_bonus(equipment_dict, all_equipment)
+    if set_bonus and 'effects' in set_bonus:
+        effects = set_bonus['effects']
+        
+        # 世间真理的传授者：暴击率+20%
+        if 'critRate' in effects:
+            stats['critRate'] = stats.get('critRate', 0.0) + effects['critRate']
+        
+        # 黑色狭窄的小巷：攻击力+50%（百分比加成）
+        if 'attack_bonus' in effects:
+            attack_percent_bonuses.append(effects['attack_bonus'])
+        
+        # 愿这一轮朝阳照亮明天：生命值+50%（百分比加成）
+        if 'hp_bonus' in effects:
+            hp_percent_bonuses.append(effects['hp_bonus'])
+        
+        if 'healingBonus' in effects:
+            stats['healingBonus'] = stats.get('healingBonus', 0.0) + effects['healingBonus']
+    
+    # 先应用所有固定值加成
+    for flat_bonus in attack_flat_bonuses:
+        base_attack += flat_bonus
+    for flat_bonus in hp_flat_bonuses:
+        base_hp += flat_bonus
+    
+    # 然后基于基础值（包含固定值加成后）应用所有百分比加成
+    # 所有百分比加成累加后一次性应用
+    total_attack_percent = sum(attack_percent_bonuses)
+    total_hp_percent = sum(hp_percent_bonuses)
+    
+    if total_attack_percent > 0:
+        stats['attack'] = base_attack * (1 + total_attack_percent)
+    else:
+        stats['attack'] = base_attack
+    
+    if total_hp_percent > 0:
+        stats['hp'] = base_hp * (1 + total_hp_percent)
+    else:
+        stats['hp'] = base_hp
+    
+    # 攻击力和生命值向上取整
+    if 'attack' in stats:
+        stats['attack'] = int(math.ceil(stats['attack']))
+    if 'hp' in stats:
+        stats['hp'] = int(math.ceil(stats['hp']))
+    
+    # 黑色狭窄的小巷：检查攻击力>150的条件（在取整后检查）
+    if set_bonus and 'effects' in set_bonus and 'attribute_power_conditional' in set_bonus['effects']:
+        if stats.get('attack', 0) > 150:
+            stats['attributePower'] = stats.get('attributePower', 0) + set_bonus['effects']['attribute_power_conditional']
+    
+    # 应用角色被动技能
+    if character_name:
+        stats = apply_passive_skills_server(stats, character_name)
+    
+    return stats
+
+# 初始化用户数据
+users = load_user_data()
+
+# 初始化新用户的角色数据
+def generate_random_equipment():
+    """随机生成一件装备"""
+    # 1. 从三个套装中随机一套
+    set_name = random.choice(list(EQUIPMENT_SETS.keys()))
+    set_info = EQUIPMENT_SETS[set_name]
+    
+    # 2. 从三个部件中随机一件
+    slot = random.choice(['weapon', 'accessory', 'headwear'])
+    equipment_name = set_info[slot]
+    
+    # 3. 从部件的主词条中随机一件
+    main_stats = EQUIPMENT_MAIN_STATS[slot]
+    main_stat = random.choice(main_stats)
+    
+    # 4. 从所有副词条中随机3条（不与主词条相同）
+    available_sub_stats = [s for s in EQUIPMENT_SUB_STATS if s['name'] != main_stat['name']]
+    selected_sub_stats = random.sample(available_sub_stats, min(3, len(available_sub_stats)))
+    
+    # 5. 每条副词条的数值从区间内随机
+    sub_stats = []
+    for sub_stat in selected_sub_stats:
+        if sub_stat['type'] == 'percent':
+            value = random.uniform(sub_stat['min'], sub_stat['max'])
+        elif sub_stat['type'] == 'time':
+            value = random.uniform(sub_stat['min'], sub_stat['max'])
+        else:  # flat
+            value = random.randint(int(sub_stat['min']), int(sub_stat['max']))
+        sub_stats.append({
+            'name': sub_stat['name'],
+            'value': value,
+            'type': sub_stat['type'],
+            'upgradeCount': 0  # 该副词条被强化的次数
+        })
+    
+    equipment = {
+        'id': f"equip_{int(time.time() * 1000)}_{random.randint(1000, 9999)}",
+        'name': equipment_name,
+        'set': set_name,
+        'slot': slot,
+        'mainStat': main_stat,
+        'subStats': sub_stats,
+        'level': 0  # 装备等级，初始为0
+    }
+    
+    return equipment
+
+def init_user_characters():
+    """初始化用户的角色数据"""
+    characters = {}
+    for char_name in CHARACTERS:
+        # 设置默认值
+        if char_name == '勇者':
+            # 勇者的默认面板
+            default_stats = {
+                'attack': 53,
+                'critRate': 0.20,  # 20%
+                'critDamage': 1.0,  # 100%
+                'reloadReduction': 0.2,  # 0.2秒
+                'rapidFire': 0.0,  # 0秒
+                'extraAmmo': 0.0,  # 0%
+                'attributePower': 100,  # 属性强度100
+                'hp': 1000  # 生命值1000
+            }
+        elif char_name == '星耀犊':
+            # 星耀犊的默认面板
+            default_stats = {
+                'attack': 0,
+                'critRate': 0.30,  # 30%
+                'critDamage': 1.5,  # 150%
+                'reloadReduction': 0.0,
+                'rapidFire': 0.0,  # 0秒
+                'extraAmmo': 0.0,  # 0%
+                'attributePower': 0,  # 默认属性强度0
+                'hp': 1500  # 生命值1500
+            }
+        elif char_name == '公主蓉':
+            # 公主蓉的默认面板
+            default_stats = {
+                'attack': 32,
+                'critRate': 0.0,  # 0%（被动会根据治疗加成增加）
+                'critDamage': 1.0,  # 100%
+                'reloadReduction': 0.0,
+                'rapidFire': 0.0,
+                'extraAmmo': 0.0,
+                'attributePower': 0,
+                'hp': 2000,  # 生命值2000
+                'healingBonus': 0.20,  # 治疗加成20%
+                'damageBonus': 0.20  # 伤害加成20%
+            }
+        elif char_name == '幺幺俊羊羊':
+            # 幺幺俊羊羊的默认面板
+            default_stats = {
+                'attack': 48,
+                'critRate': 0.15,  # 15%
+                'critDamage': 1.0,  # 100%
+                'reloadReduction': 0.0,
+                'rapidFire': 0.0,
+                'extraAmmo': 0.0,
+                'attributePower': 100,  # 属性强度100
+                'hp': 1200,  # 生命值1200
+                'damageBonus': 0.20  # 伤害加成20%
+            }
+        elif char_name == '王子栗':
+            # 王子栗的默认面板
+            default_stats = {
+                'attack': 49,
+                'critRate': 0.50,  # 50%
+                'critDamage': 1.0,  # 100%
+                'reloadReduction': 0.0,
+                'rapidFire': 0.0,
+                'extraAmmo': 0.0,
+                'attributePower': 0,  # 默认属性强度0（被动会转换属性）
+                'hp': 1000  # 生命值1000
+            }
+        else:
+            # 其他角色默认值
+            default_stats = {
+                'attack': 0,
+                'critRate': 0,
+                'critDamage': 1.0,  # 默认100%暴击伤害
+                'reloadReduction': 0.0,
+                'rapidFire': 0.0,
+                'extraAmmo': 0.0,
+                'attributePower': 0,  # 默认属性强度0
+                'hp': 1000  # 生命值1000
+            }
+        
+        characters[char_name] = {
+            'equipment': {
+                'weapon': None,  # 执器
+                'accessory': None,  # 挂坠
+                'headwear': None  # 头饰
+            },
+            'stats': default_stats,
+            'attribute': CHARACTER_ATTRIBUTES.get(char_name, '无属性')  # 角色属性
+        }
+    return characters
+
+def generate_room_key():
+    """生成6位随机房间密钥"""
+    return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+def random_character():
+    """随机生成角色形象"""
+    character = random.choice(CHARACTERS)
+    color = random.choice(COLOR_VARIANTS)
+    return {'character': character, 'color': color}
+
+@app.route('/')
+def index():
+    """主界面"""
+    # 检查登录状态
+    is_logged_in = session.get('user_id') is not None
+    username = session.get('username', '')
+    
+    # 如果已登录，加载用户角色数据
+    user_characters = None
+    if is_logged_in:
+        users = load_user_data()
+        if username in users and 'characters' in users[username]:
+            user_characters = users[username]['characters']
+        else:
+            # 如果没有角色数据，初始化
+            if username in users:
+                users[username]['characters'] = init_user_characters()
+                save_user_data(users)
+                user_characters = users[username]['characters']
+    
+    # 如果已登录，加载用户装备和道具
+    user_equipment = []
+    refinement_material = 0
+    wish_ticket = 0
+    if is_logged_in:
+        users = load_user_data()
+        if username in users:
+            if 'equipment' in users[username]:
+                user_equipment = users[username]['equipment']
+                refinement_material = users[username].get('refinement_material', 0)
+                wish_ticket = users[username].get('wish_ticket', 0)
+    
+    # 如果已登录，加载用户武器
+    user_weapons = []
+    if is_logged_in:
+        users = load_user_data()
+        if username in users and 'weapons' in users[username]:
+            user_weapons = users[username]['weapons']
+    
+    return render_template('index.html', 
+                         is_logged_in=is_logged_in, 
+                         username=username,
+                         characters=CHARACTERS,
+                         character_skills=CHARACTER_SKILLS,
+                         user_characters=user_characters,
+                         user_equipment=user_equipment,
+                         user_weapons=user_weapons,
+                         refinement_material=refinement_material,
+                         wish_ticket=wish_ticket)
+
+@app.route('/register', methods=['POST'])
+def register():
+    """注册账号"""
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    
+    if not username or not password:
+        flash('用户名和密码不能为空', 'error')
+        return redirect(url_for('index'))
+    
+    # 重新加载用户数据（防止并发问题）
+    users = load_user_data()
+    
+    if username in users:
+        flash('用户名已存在', 'error')
+        return redirect(url_for('index'))
+    
+    # 创建新用户数据
+    characters = init_user_characters()
+    
+    # 生成初始装备（三个不同部位）
+    initial_equipment = []
+    slots = ['weapon', 'accessory', 'headwear']
+    for slot in slots:
+        equipment = generate_random_equipment()
+        # 确保装备是正确部位
+        while equipment['slot'] != slot:
+            equipment = generate_random_equipment()
+        initial_equipment.append(equipment)
+    
+    users[username] = {
+        'password': password,  # 实际应使用hashlib加密
+        'created_at': time.time(),
+        'characters': characters,  # 初始化角色数据
+        'equipment': initial_equipment,  # 初始装备
+        'weapons': [],  # 武器列表
+        'refinement_material': 0,  # 叠志精心料
+        'wish_ticket': 0,  # 神兵许愿单
+        'last_login_date': None,  # 最后登录日期（用于每日奖励）
+        'gacha_pity_4star': 0,  # 四星保底计数（每10抽至少1个四星）
+        'gacha_pity_5star': 0,  # 五星保底计数（每50抽至少1个五星）
+        'has_received_welcome_reward': False  # 是否已领取首次登录奖励
+    }
+    
+    # 保存到文件
+    if save_user_data(users):
+        flash('注册成功，请登录', 'success')
+    else:
+        flash('注册失败，请重试', 'error')
+    
+    return redirect(url_for('index'))
+
+@app.route('/login', methods=['POST'])
+def login():
+    """登录"""
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    
+    if not username or not password:
+        flash('用户名和密码不能为空', 'error')
+        return redirect(url_for('index'))
+    
+    # 重新加载用户数据
+    users = load_user_data()
+    
+    if username not in users:
+        flash('用户名或密码错误', 'error')
+        return redirect(url_for('index'))
+    
+    if users[username]['password'] != password:
+        flash('用户名或密码错误', 'error')
+        return redirect(url_for('index'))
+    
+    # 如果用户没有角色数据，初始化
+    if 'characters' not in users[username]:
+        users[username]['characters'] = init_user_characters()
+        save_user_data(users)
+    
+    # 如果用户没有装备数据，初始化为空列表
+    if 'equipment' not in users[username]:
+        users[username]['equipment'] = []
+        save_user_data(users)
+    
+    # 初始化武器数据（如果不存在）
+    if 'weapons' not in users[username]:
+        users[username]['weapons'] = []
+    
+    # 初始化道具数据（如果不存在）
+    if 'refinement_material' not in users[username]:
+        users[username]['refinement_material'] = 0
+    if 'wish_ticket' not in users[username]:
+        users[username]['wish_ticket'] = 0
+    if 'last_login_date' not in users[username]:
+        users[username]['last_login_date'] = None
+    if 'gacha_pity_4star' not in users[username]:
+        users[username]['gacha_pity_4star'] = 0
+    if 'gacha_pity_5star' not in users[username]:
+        users[username]['gacha_pity_5star'] = 0
+    if 'has_received_welcome_reward' not in users[username]:
+        users[username]['has_received_welcome_reward'] = False
+    
+    # 检查首次登录奖励（新用户注册后第一次登录）
+    if not users[username].get('has_received_welcome_reward', False):
+        # 首次登录，给予欢迎奖励
+        users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 30
+        users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 20
+        users[username]['has_received_welcome_reward'] = True
+        save_user_data(users)
+        flash(f'欢迎奖励：获得30个叠志精心料和20个神兵许愿单！', 'success')
+    
+    # 检查每日首次登录奖励
+    today = datetime.date.today().isoformat()  # 获取今天的日期字符串（YYYY-MM-DD）
+    last_login_date = users[username].get('last_login_date')
+    
+    if last_login_date != today:
+        # 今日首次登录，给予奖励
+        users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 15
+        users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 5
+        
+        # 生成随机装备
+        random_equipment = generate_random_equipment()
+        if 'equipment' not in users[username]:
+            users[username]['equipment'] = []
+        users[username]['equipment'].append(random_equipment)
+        
+        users[username]['last_login_date'] = today
+        save_user_data(users)
+        flash(f'每日登录奖励：获得15个叠志精心料、5个神兵许愿单和1件随机装备！', 'success')
+    
+    # 登录成功，设置session
+    session['user_id'] = username
+    session['username'] = username
+    session.permanent = True
+    session.modified = True
+    
+    flash('登录成功', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/logout')
+def logout():
+    """登出"""
+    session.clear()
+    flash('已登出', 'info')
+    return redirect(url_for('index'))
+
+@app.route('/create_room', methods=['POST'])
+def create_room():
+    """创建房间"""
+    # 检查登录状态
+    if not session.get('user_id'):
+        flash('请先登录', 'error')
+        return redirect(url_for('index'))
+    
+    player_name = request.form.get('playerName', '').strip()
+    max_players = int(request.form.get('maxPlayers', 2))
+    selected_map = request.form.get('mapSelect', '寒清境')
+    selected_monster = request.form.get('monsterSelect', '杂鱼蕉形脸')
+    
+    print(f"\n{'='*60}")
+    print(f"=== 创建房间 ===")
+    print(f"收到的表单数据:")
+    print(f"  玩家名: '{player_name}'")
+    print(f"  玩家人数: {max_players}")
+    print(f"  地图: '{selected_map}'")
+    print(f"  怪物: '{selected_monster}'")
+    
+    if not player_name:
+        print(f"❌ 错误：玩家名为空")
+        print(f"{'='*60}\n")
+        flash('玩家名不能为空', 'error')
+        return redirect(url_for('index'))
+    
+    # 生成房间密钥
+    room_key = generate_room_key()
+    
+    # 保存user_id和username（在清除session前）
+    saved_user_id = session.get('user_id')
+    saved_username = session.get('username')
+    
+    # 清除旧session，设置新session
+    session.clear()
+    
+    # 恢复user_id和username（确保游戏页面能获取用户数据）
+    if saved_user_id:
+        session['user_id'] = saved_user_id
+    if saved_username:
+        session['username'] = saved_username
+    
+    session['player_name'] = player_name
+    session['is_host'] = True
+    session['room_key'] = room_key
+    session.permanent = True
+    session.modified = True
+    
+    # 创建房间
+    rooms[room_key] = {
+        'host_name': player_name,
+        'max_players': max_players,
+        'map': selected_map,
+        'monster': selected_monster,
+        'players': {}
+    }
+    
+    print(f"✓ 房间已创建:")
+    print(f"  房间密钥: {room_key}")
+    print(f"  房主: '{player_name}'")
+    print(f"  最大玩家数: {max_players}")
+    print(f"  地图: '{selected_map}'")
+    print(f"  怪物: '{selected_monster}'")
+    print(f"✓ Session已设置:")
+    print(f"  player_name: '{session.get('player_name')}'")
+    print(f"  is_host: {session.get('is_host')}")
+    print(f"  room_key: '{session.get('room_key')}'")
+    print(f"  permanent: {session.permanent}")
+    print(f"✓ 重定向到: /lobby/{room_key}")
+    print(f"{'='*60}\n")
+    
+    # 重定向到大厅
+    return redirect(f'/lobby/{room_key}')
+
+@app.route('/lobby/<room_key>')
+def lobby(room_key):
+    """大厅界面"""
+    print(f"\n{'='*60}")
+    print(f"=== 访问大厅页面 ===")
+    print(f"URL房间密钥: {room_key}")
+    print(f"Session内容: {dict(session)}")
+    
+    # 验证房间是否存在
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"{'='*60}\n")
+        return "房间不存在", 404
+    
+    room = rooms[room_key]
+    print(f"✓ 房间存在，房间信息:")
+    print(f"  房主: '{room['host_name']}'")
+    print(f"  最大玩家数: {room['max_players']}")
+    print(f"  地图: '{room['map']}'")
+    print(f"  怪物: '{room['monster']}'")
+    print(f"  当前玩家数: {len(room['players'])}")
+    
+    # 检查session中是否有玩家名
+    if not session.get('player_name'):
+        print(f"❌ Session中无玩家信息，重定向到主页")
+        print(f"{'='*60}\n")
+        return redirect(url_for('index'))
+    
+    player_name = session.get('player_name')
+    
+    print(f"✓ 渲染模板，传递参数:")
+    print(f"  room_key: '{room_key}'")
+    print(f"  player_name: '{player_name}'")
+    print(f"{'='*60}\n")
+    
+    return render_template('lobby.html', room_key=room_key, player_name=player_name)
+
+@app.route('/game/<room_key>')
+def game(room_key):
+    """游戏界面"""
+    print(f"\n{'='*60}")
+    print(f"=== 访问游戏页面 ===")
+    print(f"URL房间密钥: {room_key}")
+    print(f"当前所有房间: {list(rooms.keys())}")
+    print(f"Session内容: {dict(session)}")
+    
+    # 验证房间是否存在
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"可能的原因：")
+        print(f"  1. 房间密钥错误")
+        print(f"  2. 房间已被删除")
+        print(f"  3. 服务器已重启")
+        print(f"{'='*60}\n")
+        return "房间不存在", 404
+    
+    room = rooms[room_key]
+    player_name = session.get('player_name', '玩家')
+    username = session.get('user_id')  # 获取用户名
+    
+    # 查找玩家的角色信息
+    player_avatar = {'character': '勇者', 'color': 1}
+    for sid, pinfo in room['players'].items():
+        if pinfo['name'] == player_name:
+            player_avatar = pinfo.get('avatar', player_avatar)
+            break
+    
+    # 获取用户角色数据（包含装备和被动技能加成）
+    user_character_data = None
+    if username:
+        users = load_user_data()
+        if username in users and 'characters' in users[username]:
+            character_name = player_avatar.get('character', '勇者')
+            if character_name in users[username]['characters']:
+                char_data = users[username]['characters'][character_name]
+                base_stats = char_data.get('stats', {}).copy()
+                equipment_dict = char_data.get('equipment', {})
+                all_equipment = users[username].get('equipment', [])
+                
+                # 计算装备和套装效果（包含被动技能）
+                final_stats = calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, character_name)
+                
+                # 创建包含最终属性的角色数据
+                user_character_data = {
+                    'stats': final_stats,
+                    'equipment': equipment_dict,
+                    'attribute': char_data.get('attribute', '无属性')
+                }
+    
+    print(f"✓ 渲染游戏页面:")
+    print(f"  房间: {room_key}")
+    print(f"  玩家: {player_name}")
+    print(f"  角色: {player_avatar}")
+    print(f"  地图: {room['map']}")
+    print(f"  怪物: {room['monster']}")
+    print(f"{'='*60}\n")
+    
+    return render_template('game.html', 
+                         room_key=room_key,
+                         player_name=player_name,
+                         player_avatar=player_avatar,
+                         map_name=room['map'],
+                         monster_type=room['monster'],
+                         user_character_data=user_character_data)
+
+@app.route('/join_room', methods=['POST'])
+def join_room_http():
+    """通过HTTP POST加入房间"""
+    # 检查登录状态
+    if not session.get('user_id'):
+        flash('请先登录', 'error')
+        return redirect(url_for('index'))
+    
+    room_key = request.form.get('roomKey', '').strip().upper()
+    player_name = request.form.get('playerName', '').strip()
+    
+    print(f"\n{'='*60}")
+    print(f"=== 加入房间请求（HTTP POST）===")
+    print(f"房间密钥: {room_key}")
+    print(f"玩家名: {player_name}")
+    
+    if not player_name:
+        print(f"❌ 错误：玩家名为空")
+        print(f"{'='*60}\n")
+        flash('玩家名不能为空', 'error')
+        return redirect(url_for('index'))
+    
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"{'='*60}\n")
+        return "房间不存在或密钥错误", 404
+    
+    room = rooms[room_key]
+    print(f"当前房间玩家数: {len(room['players'])} / {room['max_players']}")
+    
+    # 检查房间是否已满
+    if len(room['players']) >= room['max_players']:
+        print(f"❌ 错误：房间已满")
+        print(f"{'='*60}\n")
+        return f"房间已满（{room['max_players']}/{room['max_players']}）", 400
+    
+    # 保存user_id和username（在清除session前）
+    saved_user_id = session.get('user_id')
+    saved_username = session.get('username')
+    
+    # 保存玩家信息到session
+    session.clear()
+    
+    # 恢复user_id和username（确保游戏页面能获取用户数据）
+    if saved_user_id:
+        session['user_id'] = saved_user_id
+    if saved_username:
+        session['username'] = saved_username
+    
+    session['player_name'] = player_name
+    session['is_host'] = False
+    session['room_key'] = room_key
+    session.permanent = True
+    session.modified = True
+    
+    print(f"✓ Session已设置:")
+    print(f"  player_name: '{session.get('player_name')}'")
+    print(f"  is_host: {session.get('is_host')}")
+    print(f"  room_key: '{session.get('room_key')}'")
+    print(f"  permanent: {session.permanent}")
+    print(f"✓ 重定向到: /lobby/{room_key}")
+    print(f"{'='*60}\n")
+    
+    # 重定向到大厅
+    return redirect(f'/lobby/{room_key}')
+
+@socketio.on('join_room_session')
+def handle_join_room_session(data):
+    """大厅页面加载时加入Socket房间"""
+    room_key = data.get('room_key')
+    player_name = data.get('player_name', '').strip()
+    
+    print(f"\n{'='*60}")
+    print(f"=== join_room_session 事件 ===")
+    print(f"收到的数据: {data}")
+    print(f"房间密钥: '{room_key}'")
+    print(f"玩家名(参数): '{player_name}'")
+    print(f"Socket SID: {request.sid}")
+    print(f"Session内容: {dict(session)}")
+    
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"{'='*60}\n")
+        emit('error', {'message': '房间不存在'})
+        return
+    
+    room = rooms[room_key]
+    print(f"✓ 房间信息:")
+    print(f"  房主: '{room['host_name']}'")
+    print(f"  最大玩家数: {room['max_players']}")
+    print(f"  地图: '{room['map']}'")
+    print(f"  怪物: '{room['monster']}'")
+    print(f"  当前玩家数: {len(room['players'])}")
+    
+    # 如果没有提供玩家名，从session获取
+    if not player_name:
+        player_name = session.get('player_name', '')
+        print(f"⚠️ 参数中无玩家名，从session获取: '{player_name}'")
+    
+    # 如果还是没有玩家名，说明这是一个无效的连接
+    if not player_name:
+        print(f"❌ 错误：无法确定玩家名")
+        print(f"{'='*60}\n")
+        emit('error', {'message': '玩家信息丢失，请重新加入房间'})
+        return
+    
+    # 检查是否是刷新（同一玩家用不同SID重新连接）
+    old_sid = None
+    old_player_data = None
+    for sid, pinfo in list(room['players'].items()):
+        if pinfo['name'] == player_name and sid != request.sid:
+            print(f"⚠️ 检测到玩家刷新，旧SID: {sid}, 新SID: {request.sid}")
+            old_sid = sid
+            old_player_data = pinfo.copy()
+            # 删除旧连接
+            del room['players'][sid]
+            break
+    
+    # 如果玩家不在房间中，添加进去
+    if request.sid not in room['players']:
+        if old_sid and old_player_data:
+            # 刷新情况，完全保留之前的数据（包括is_host）
+            print(f"✓ 玩家刷新，保留之前的所有状态")
+            room['players'][request.sid] = old_player_data
+            print(f"  SID: {request.sid}")
+            print(f"  名字: '{old_player_data['name']}'")
+            print(f"  是否房主: {old_player_data['is_host']}")
+            print(f"  角色: {old_player_data.get('avatar')}")
+            print(f"  准备状态: {old_player_data.get('ready', False)}")
+        else:
+            # 没有旧数据，但有Session，说明是页面跳转导致的断开重连
+            # 使用Session数据重新添加玩家
+            print(f"✓ 页面跳转重连，使用Session数据恢复玩家")
+            is_host_from_session = session.get('is_host', False)
+            
+            # 安全检查：确保只有真正的房主才能设置is_host=True
+            if is_host_from_session and player_name != room['host_name']:
+                print(f"⚠️ 警告：Session声称是房主，但名字不匹配！")
+                print(f"   Session中的player_name: '{player_name}'")
+                print(f"   房间的host_name: '{room['host_name']}'")
+                print(f"   强制设置is_host=False")
+                is_host_from_session = False
+            
+            room['players'][request.sid] = {
+                'name': player_name,
+                'ready': False,
+                'is_host': is_host_from_session,
+                'avatar': random_character()
+            }
+            print(f"  SID: {request.sid}")
+            print(f"  名字: '{player_name}'")
+            print(f"  是否房主: {is_host_from_session}")
+            print(f"  角色: {room['players'][request.sid]['avatar']}")
+            print(f"  准备状态: False")
+    else:
+        print(f"⚠️ 玩家已在房间中（当前SID）")
+    
+    # 加入Socket房间
+    join_room(room_key)
+    print(f"✓ 已加入Socket房间: {room_key}")
+    
+    # 检查是否是新加入（没有旧数据）
+    is_new_join = not old_sid and not old_player_data
+    
+    # 发送房间信息
+    room_info = get_room_info(room_key)
+    print(f"✓ 生成房间信息:")
+    print(f"  玩家列表: {[p['name'] for p in room_info['players']]}")
+    print(f"  玩家数量: {len(room_info['players'])}")
+    print(f"✓ 发送 room_info 给当前客户端")
+    emit('room_info', room_info)
+    print(f"✓ 广播 update_room 给房间内所有人")
+    socketio.emit('update_room', room_info, room=room_key)
+    
+    # 如果是新加入，广播通知
+    if is_new_join:
+        print(f"✓ 广播新玩家加入消息")
+        socketio.emit('player_joined_lobby', {
+            'message': f'{player_name} 加入了房间',
+            'player_name': player_name
+        }, room=room_key)
+    
+    print(f"{'='*60}\n")
+
+@socketio.on('get_room_info')
+def handle_get_room_info(data):
+    """获取房间信息"""
+    room_key = data.get('room_key')
+    if room_key in rooms:
+        emit('room_info', get_room_info(room_key))
+
+@socketio.on('send_lobby_message')
+def handle_send_lobby_message(data):
+    """处理大厅聊天消息"""
+    room_key = data.get('room_key')
+    message = data.get('message', '').strip()
+    
+    if not room_key or room_key not in rooms:
+        return
+    
+    if not message:
+        return
+    
+    room = rooms[room_key]
+    if request.sid not in room['players']:
+        return
+    
+    # 获取发送者信息
+    player_info = room['players'][request.sid]
+    player_name = player_info.get('name', '未知玩家')
+    
+    # 限制消息长度
+    if len(message) > 200:
+        message = message[:200]
+    
+    # 广播消息给房间内所有玩家
+    for sid in room['players']:
+        is_own = (sid == request.sid)
+        socketio.emit('lobby_message', {
+            'player_name': player_name,
+            'message': message,
+            'is_own': is_own
+        }, room=sid)
+    
+    print(f"💬 大厅聊天: {player_name} 在房间 {room_key} 发送消息: {message[:50]}...")
+
+@socketio.on('leave_lobby')
+def handle_leave_lobby(data):
+    """玩家主动离开大厅"""
+    room_key = data.get('room_key')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if request.sid not in room['players']:
+        return
+    
+    player_name = room['players'][request.sid].get('name', '未知玩家')
+    player_is_host = room['players'][request.sid].get('is_host', False)
+    
+    print(f"\n{'='*60}")
+    print(f"=== 玩家主动离开大厅 ===")
+    print(f"玩家: {player_name}")
+    print(f"房间: {room_key}")
+    print(f"是否房主: {player_is_host}")
+    
+    # 从Socket房间中移除
+    leave_room(room_key)
+    
+    # 从玩家列表中移除
+    del room['players'][request.sid]
+    
+    # 如果是房主离开
+    if player_is_host:
+        print(f"⚠️ 房主离开房间")
+        
+        # 如果房间里还有其他玩家，选择一个新房主
+        if len(room['players']) > 0:
+            # 选择第一个玩家作为新房主
+            new_host_sid = list(room['players'].keys())[0]
+            room['players'][new_host_sid]['is_host'] = True
+            room['host_name'] = room['players'][new_host_sid]['name']
+            
+            print(f"✓ 选择新房主: {room['host_name']} (SID: {new_host_sid})")
+            
+            # 通知所有玩家房主更换
+            socketio.emit('host_changed', {
+                'message': f'房主已离开，{room["host_name"]} 成为新房主',
+                'new_host': room['host_name']
+            }, room=room_key)
+        else:
+            # 房间空了，删除房间
+            print(f"⚠️ 房间无玩家，删除房间")
+            del rooms[room_key]
+            print(f"{'='*60}\n")
+            return
+    else:
+        # 普通玩家离开，通知其他玩家
+        print(f"✓ 普通玩家离开，通知其他玩家更新")
+        socketio.emit('player_left_lobby', {
+            'message': f'{player_name} 离开了房间',
+            'player_name': player_name
+        }, room=room_key)
+    
+    # 更新房间信息
+    socketio.emit('update_room', get_room_info(room_key), room=room_key)
+    
+    print(f"{'='*60}\n")
+
+@socketio.on('toggle_ready')
+def handle_toggle_ready(data):
+    """切换准备状态"""
+    room_key = data.get('room_key')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if request.sid not in room['players']:
+        return
+    
+    # 切换准备状态
+    room['players'][request.sid]['ready'] = not room['players'][request.sid]['ready']
+    
+    # 广播更新
+    socketio.emit('update_room', get_room_info(room_key), room=room_key)
+
+@socketio.on('change_player_name')
+def handle_change_player_name(data):
+    """更改玩家名字"""
+    room_key = data.get('room_key')
+    new_name = data.get('new_name', '').strip()
+    
+    if not new_name or room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if request.sid not in room['players']:
+        return
+    
+    # 更新玩家名字
+    room['players'][request.sid]['name'] = new_name
+    
+    # 如果是房主，也更新房主名字
+    if room['players'][request.sid].get('is_host', False):
+        room['host_name'] = new_name
+    
+    # 更新session
+    session['player_name'] = new_name
+    session.modified = True
+    
+    # 广播更新
+    socketio.emit('update_room', get_room_info(room_key), room=room_key)
+
+@socketio.on('change_avatar')
+def handle_change_avatar(data):
+    """更改角色形象"""
+    room_key = data.get('room_key')
+    character = data.get('character')
+    color = data.get('color')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if request.sid not in room['players']:
+        return
+    
+    # 验证角色和配色
+    if character not in CHARACTERS or color not in COLOR_VARIANTS:
+        emit('error', {'message': '无效的角色或配色'})
+        return
+    
+    # 检查是否有其他玩家已经选择了该角色
+    for player_id, player_data in room['players'].items():
+        if player_id != request.sid and player_data.get('avatar', {}).get('character') == character:
+            emit('error', {'message': f'角色"{character}"已被其他玩家选择'})
+            return
+    
+    # 更新角色形象
+    room['players'][request.sid]['avatar'] = {
+        'character': character,
+        'color': color
+    }
+    
+    # 广播更新
+    socketio.emit('update_room', get_room_info(room_key), room=room_key)
+
+@socketio.on('update_room_settings')
+def handle_update_room_settings(data):
+    """更新房间设置（仅房主可用）"""
+    room_key = data.get('room_key')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    
+    # 检查是否为房主
+    is_host = request.sid in room['players'] and room['players'][request.sid].get('is_host', False)
+    if not is_host:
+        emit('error', {'message': '只有房主才能修改设置'})
+        return
+    
+    # 验证玩家数量
+    if 'max_players' in data:
+        new_max_players = data['max_players']
+        current_player_count = len(room['players'])
+        if new_max_players < current_player_count:
+            emit('error', {'message': f'玩家人数不能小于当前玩家数量（{current_player_count}人）'})
+            return
+    
+    # 更新设置
+    if 'max_players' in data:
+        room['max_players'] = data['max_players']
+    if 'map' in data:
+        room['map'] = data['map']
+    if 'monster' in data:
+        room['monster'] = data['monster']
+    
+    # 广播更新
+    socketio.emit('update_room', get_room_info(room_key), room=room_key)
+
+@socketio.on('start_game')
+def handle_start_game(data):
+    """开始游戏（仅房主可用）"""
+    room_key = data.get('room_key')
+    
+    print(f"\n{'='*60}")
+    print(f"=== 开始游戏 ===")
+    print(f"房间密钥: {room_key}")
+    print(f"当前所有房间: {list(rooms.keys())}")
+    
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"{'='*60}\n")
+        return
+    
+    room = rooms[room_key]
+    
+    # 检查是否为房主
+    is_host = request.sid in room['players'] and room['players'][request.sid].get('is_host', False)
+    print(f"请求者SID: {request.sid}")
+    print(f"是否为房主: {is_host}")
+    
+    if not is_host:
+        print(f"❌ 错误：只有房主才能开始游戏")
+        print(f"{'='*60}\n")
+        emit('error', {'message': '只有房主才能开始游戏'})
+        return
+    
+    # 检查是否满足开始条件
+    can_start = can_start_game(room_key)
+    print(f"是否满足开始条件: {can_start}")
+    
+    if not can_start:
+        print(f"❌ 错误：未满足开始条件")
+        print(f"{'='*60}\n")
+        emit('error', {'message': '未满足开始条件'})
+        return
+    
+    # 重置游戏状态（每次开始新游戏时都重置）
+    monster_type = room.get('monster', '杂鱼蕉形脸')
+    room['game_state'] = {
+        'started': True,
+        'players': {},  # 清空玩家列表
+        'bullets': [],  # 清空子弹列表
+        'enemies': [],  # 清空敌人列表
+        'beams': {},  # 光束系统
+        'countdown': 3,  # 3秒倒计时
+        'countdown_started': False,
+        'game_start_time': None,  # 游戏开始时间（倒计时结束后设置）
+        'monster_type': monster_type,
+        'enemies_spawned': False,  # 敌人是否已生成
+        'enemy_collision_cooldowns': {}  # 清空碰撞冷却
+    }
+    
+    # 添加测试木桩（勇者角色，1000HP，无法移动和射击）
+    dummy_id = 'dummy_player_1'
+    room['game_state']['players'][dummy_id] = {
+        'id': dummy_id,
+        'name': '测试木桩',
+        'avatar': {'character': '勇者', 'color': 1},
+        'x': 200,
+        'y': 200,
+        'hp': 1000,
+        'maxHp': 1000,
+        'angle': 0,
+        'hit_flash_end': 0,
+        'lockedBy': None,
+        'isDummy': True  # 标记为测试木桩
+    }
+    print(f"✓ 游戏状态已重置并初始化，怪物类型: {monster_type}")
+    print(f"✓ 已添加测试木桩: {dummy_id}")
+    
+    print(f"✓ 广播游戏开始事件到房间 {room_key}")
+    print(f"房间内玩家数: {len(room['players'])}")
+    print(f"房间详情:")
+    for sid, pinfo in room['players'].items():
+        print(f"  - {pinfo['name']} (SID: {sid})")
+    print(f"当前所有房间密钥: {list(rooms.keys())}")
+    print(f"{'='*60}\n")
+    
+    # 广播游戏开始
+    socketio.emit('game_started', {'room_key': room_key}, room=room_key)
+
+# ===== 游戏相关Socket事件 =====
+
+@socketio.on('join_game')
+def handle_join_game(data):
+    """玩家加入游戏"""
+    room_key = data.get('room_key')
+    player_name = data.get('player_name')
+    avatar = data.get('avatar')
+    x = data.get('x', 400)
+    y = data.get('y', 300)
+    # hp 将在后面从用户数据中获取，不使用客户端传来的值
+    
+    print(f"\n{'='*60}")
+    print(f"=== 玩家加入游戏 ===")
+    print(f"玩家: {player_name}")
+    print(f"SID: {request.sid}")
+    print(f"房间: {room_key}")
+    
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"{'='*60}\n")
+        emit('error', {'message': '房间不存在'})
+        return
+    
+    room = rooms[room_key]
+    
+    # 初始化游戏状态（如果还没有）
+    if 'game_state' not in room:
+        monster_type = room.get('monster', '杂鱼蕉形脸')
+        room['game_state'] = {
+            'started': True,
+            'players': {},
+            'bullets': [],
+            'enemies': [],
+            'countdown': 3,  # 3秒倒计时
+            'countdown_started': False,
+            'game_start_time': None,
+            'monster_type': monster_type
+        }
+        
+        # 添加测试木桩（勇者角色，1000HP，无法移动和射击）
+        dummy_id = 'dummy_player_1'
+        room['game_state']['players'][dummy_id] = {
+            'id': dummy_id,
+            'name': '测试木桩',
+            'avatar': {'character': '勇者', 'color': 1},
+            'x': 200,
+            'y': 200,
+            'hp': 1000,
+            'maxHp': 1000,
+            'angle': 0,
+            'hit_flash_end': 0,
+            'lockedBy': None,
+            'isDummy': True  # 标记为测试木桩
+        }
+        print(f"✓ 初始化游戏状态，怪物类型: {monster_type}")
+        print(f"✓ 已添加测试木桩: {dummy_id}")
+    
+    # 检查玩家是否已经在游戏中（防止重复加入）
+    if request.sid in room['game_state']['players']:
+        print(f"⚠️ 玩家已在游戏中，刷新状态")
+        # 更新玩家信息（可能是刷新页面）
+        player = room['game_state']['players'][request.sid]
+        player['name'] = player_name
+        player['avatar'] = avatar
+        # 刷新时重新获取用户数据，确保生命值和属性正确
+        username = session.get('user_id')
+        player['username'] = username  # 更新用户名
+        if username:
+            users = load_user_data()
+            if username in users and 'characters' in users[username]:
+                character_name = avatar.get('character', '勇者')
+                if character_name in users[username]['characters']:
+                    char_data = users[username]['characters'][character_name]
+                    stats = char_data.get('stats', {})
+                    # 根据角色设置默认生命值
+                    default_hp_map = {
+                        '勇者': 1000,
+                        '公主蓉': 2000,
+                        '幺幺俊羊羊': 1200,
+                        '星耀犊': 1500,
+                        '王子栗': 1000
+                    }
+                    user_hp = stats.get('hp', None)
+                    if user_hp is not None:
+                        max_hp = user_hp
+                    else:
+                        max_hp = default_hp_map.get(character_name, 1000)
+                    # 更新生命值上限
+                    player['maxHp'] = max_hp
+                    # 如果当前hp大于maxHp则设为maxHp，如果小于maxHp则保持当前hp（不自动回满）
+                    if player.get('hp', 0) > max_hp:
+                        player['hp'] = max_hp
+                    # 如果hp未设置或为0，则设置为maxHp（满血）
+                    if player.get('hp', 0) <= 0:
+                        player['hp'] = max_hp
+                    player['attributePower'] = stats.get('attributePower', 0)
+                    player['critRate'] = stats.get('critRate', 0.0)
+                    player['critDamage'] = stats.get('critDamage', 1.0)
+                    print(f"✓ 刷新玩家数据: {character_name}, maxHp={max_hp}, hp={player.get('hp', max_hp)}")
+        
+        # 重新加入Socket房间
+        join_room(room_key)
+        
+        # 发送当前游戏状态
+        emit('game_state', {
+            'players': room['game_state']['players'],
+            'bullets': room['game_state']['bullets'],
+            'enemies': room['game_state'].get('enemies', []),
+            'countdown': room['game_state'].get('countdown', 3),
+            'myPlayerId': request.sid
+        })
+        print(f"✓ 已发送游戏状态（刷新）")
+        print(f"{'='*60}\n")
+        return
+    
+    # 加入Socket房间
+    join_room(room_key)
+    print(f"✓ 已加入Socket房间")
+    
+    # 获取玩家角色数据以确定最大生命值和属性
+    # 根据角色设置默认生命值
+    character_name = avatar.get('character', '勇者')
+    default_hp_map = {
+        '勇者': 1000,
+        '公主蓉': 2000,
+        '幺幺俊羊羊': 1200,
+        '星耀犊': 1500,
+        '王子栗': 1000
+    }
+    max_hp = default_hp_map.get(character_name, 1000)  # 根据角色设置默认值
+    crit_rate = 0.0  # 默认暴击率
+    crit_damage = 1.0  # 默认暴击伤害
+    attribute_power = 0  # 默认属性强度
+    username = session.get('user_id')
+    if username:
+        users = load_user_data()
+        if username in users and 'characters' in users[username]:
+            if character_name in users[username]['characters']:
+                char_data = users[username]['characters'][character_name]
+                base_stats = char_data.get('stats', {}).copy()
+                equipment_dict = char_data.get('equipment', {})
+                all_equipment = users[username].get('equipment', [])
+                
+                # 计算装备和套装效果（包含被动技能）
+                final_stats = calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, character_name)
+                
+                # 从最终属性中获取数值
+                max_hp = final_stats.get('hp', default_hp_map.get(character_name, 1000))
+                crit_rate = final_stats.get('critRate', 0.0)
+                crit_damage = final_stats.get('critDamage', 1.0)
+                attribute_power = final_stats.get('attributePower', 0)
+                print(f"✓ 加载玩家角色数据（含装备加成）: {character_name}, maxHp={max_hp}, critRate={crit_rate}, critDamage={crit_damage}, attributePower={attribute_power}")
+    else:
+        print(f"⚠️ 未登录用户，使用默认值: {character_name}, maxHp={max_hp}")
+    
+    # 使用max_hp初始化hp（而不是客户端传来的hp）
+    hp = max_hp
+    print(f"✓ 初始化玩家生命值: {player_name} ({character_name}), hp={hp}, maxHp={max_hp}")
+    
+    # 获取完整的最终属性（用于存储到玩家数据中）
+    final_stats_for_player = {}
+    if username:
+        users = load_user_data()
+        if username in users and 'characters' in users[username]:
+            character_name = avatar.get('character', '勇者')
+            if character_name in users[username]['characters']:
+                char_data = users[username]['characters'][character_name]
+                base_stats = char_data.get('stats', {}).copy()
+                equipment_dict = char_data.get('equipment', {})
+                all_equipment = users[username].get('equipment', [])
+                
+                # 计算装备和套装效果（包含被动技能）
+                final_stats_for_player = calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, character_name)
+                
+                # 从最终属性中获取数值（如果之前没有获取到）
+                if max_hp == default_hp_map.get(character_name, 1000):
+                    max_hp = final_stats_for_player.get('hp', max_hp)
+                if crit_rate == 0.0:
+                    crit_rate = final_stats_for_player.get('critRate', 0.0)
+                if crit_damage == 1.0:
+                    crit_damage = final_stats_for_player.get('critDamage', 1.0)
+                if attribute_power == 0:
+                    attribute_power = final_stats_for_player.get('attributePower', 0)
+    
+    # 添加玩家到游戏状态
+    room['game_state']['players'][request.sid] = {
+        'id': request.sid,
+        'name': player_name,
+        'username': username,  # 存储用户名（用于游戏胜利奖励）
+        'avatar': avatar,
+        'x': x,
+        'y': y,
+        'hp': hp,
+        'maxHp': max_hp,
+        'angle': 0,
+        'hit_flash_end': 0,  # 受击闪烁结束时间
+        'lockedBy': None,  # 被谁锁定（用于显示锁定框）
+        'isDummy': False,  # 是否为测试木桩
+        'critRate': crit_rate,  # 暴击率
+        'critDamage': crit_damage,  # 暴击伤害
+        'attributePower': attribute_power,  # 属性强度
+        'attack': final_stats_for_player.get('attack', 0) if final_stats_for_player else 0,  # 攻击力
+        'damageBonus': final_stats_for_player.get('damageBonus', 0.0) if final_stats_for_player else 0.0,  # 伤害加成
+        'healingBonus': final_stats_for_player.get('healingBonus', 0.0) if final_stats_for_player else 0.0,  # 治疗加成
+        'reloadReduction': final_stats_for_player.get('reloadReduction', 0.0) if final_stats_for_player else 0.0,  # 换弹减免
+        'rapidFire': final_stats_for_player.get('rapidFire', 0.0) if final_stats_for_player else 0.0,  # 快速射击
+        'extraAmmo': final_stats_for_player.get('extraAmmo', 0.0) if final_stats_for_player else 0.0,  # 额外弹容
+        'attribute': CHARACTER_ATTRIBUTES.get(avatar.get('character', '勇者'), '无属性')  # 角色属性
+    }
+    print(f"✓ 已添加玩家到游戏状态")
+    print(f"游戏中玩家数: {len(room['game_state']['players'])}")
+    
+    # 通知该玩家当前游戏状态
+    emit('game_state', {
+        'players': room['game_state']['players'],
+        'bullets': room['game_state']['bullets'],
+        'enemies': room['game_state'].get('enemies', []),
+        'countdown': room['game_state'].get('countdown', 3),
+        'myPlayerId': request.sid
+    })
+    print(f"✓ 已发送游戏状态给当前玩家")
+    
+    # 通知其他玩家新玩家加入
+    socketio.emit('player_joined', room['game_state']['players'][request.sid], room=room_key, skip_sid=request.sid)
+    print(f"✓ 已通知其他玩家")
+    print(f"{'='*60}\n")
+
+@socketio.on('player_move')
+def handle_player_move(data):
+    """玩家移动"""
+    room_key = data.get('room_key')
+    x = data.get('x')
+    y = data.get('y')
+    angle = data.get('angle')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    # 检查是否是测试木桩（无法移动）
+    player = room['game_state']['players'][request.sid]
+    if player.get('isDummy', False) or player.get('id', '').startswith('dummy_player_'):
+        return  # 测试木桩无法移动
+    
+    # 更新玩家位置
+    player['x'] = x
+    player['y'] = y
+    player['angle'] = angle
+    
+    # 广播给其他玩家
+    socketio.emit('player_moved', {
+        'id': request.sid,
+        'x': x,
+        'y': y,
+        'angle': angle
+    }, room=room_key, skip_sid=request.sid)
+
+@socketio.on('update_lock_target')
+def handle_update_lock_target(data):
+    """更新锁定目标"""
+    room_key = data.get('room_key')
+    target_id = data.get('targetId')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    # 更新所有玩家的锁定状态
+    for player_id, player in room['game_state']['players'].items():
+        if player_id == request.sid:
+            # 清除之前的锁定
+            for other_player_id, other_player in room['game_state']['players'].items():
+                if other_player.get('lockedBy') == request.sid:
+                    other_player['lockedBy'] = None
+            
+            # 设置新的锁定
+            if target_id and target_id in room['game_state']['players']:
+                room['game_state']['players'][target_id]['lockedBy'] = request.sid
+            break
+
+@socketio.on('activate_beam')
+def handle_activate_beam(data):
+    """激活光束（星耀犊Q技能或王子栗右键技能）"""
+    room_key = data.get('room_key')
+    beam_type = data.get('beam_type', 'star_beam')  # 默认是星耀犊的光束
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        print(f"❌ 无法激活光束: game_state不存在或玩家不存在")
+        return
+    
+    # 确保beams字典存在
+    if 'beams' not in room['game_state']:
+        room['game_state']['beams'] = {}
+    
+    # 初始化光束数据
+    player = room['game_state']['players'][request.sid]
+    character_name = player.get('avatar', {}).get('character', '未知')
+    
+    if beam_type == 'prince_purification':
+        # 王子栗净灭射线
+        room['game_state']['beams'][request.sid] = {
+            'x': player.get('x', 0),
+            'y': player.get('y', 0),
+            'angle': data.get('angle', 0),
+            'width': 50,  # 光束宽度50
+            'isCrit': False,
+            'start_time': time.time(),  # 开始时间
+            'duration': 0.6,  # 持续0.6秒
+            'hitEnemies': [],  # 已击中的敌人ID列表（每次发射只生效一次伤害）
+            'beam_type': 'prince_purification'
+        }
+        print(f"✓ 王子栗激活净灭射线: {request.sid}, 位置: ({player.get('x', 0)}, {player.get('y', 0)}), 角度: {data.get('angle', 0)}")
+    else:
+        # 星耀犊聚合光束
+        room['game_state']['beams'][request.sid] = {
+            'x': player.get('x', 0),
+            'y': player.get('y', 0),
+            'angle': data.get('angle', 0),
+            'width': 35,  # 初始宽度35（非暴击）
+            'isCrit': False,
+            'lastJudgmentTime': time.time(),  # 上次判定时间
+            'hitEnemies': [],  # 本周期已击中的敌人ID列表（使用list而不是set，因为JSON无法序列化set）
+            'hitPlayers': [],  # 本周期已治疗的玩家ID列表（使用list而不是set，因为JSON无法序列化set）
+            'beam_type': 'star_beam'
+        }
+        print(f"✓ 星耀犊激活聚合光束: {request.sid}, 位置: ({player.get('x', 0)}, {player.get('y', 0)}), 角度: {data.get('angle', 0)}")
+
+@socketio.on('update_beam')
+def handle_update_beam(data):
+    """更新光束位置和状态"""
+    room_key = data.get('room_key')
+    beam_type = data.get('beam_type', 'star_beam')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    # 确保beams字典存在
+    if 'beams' not in room['game_state']:
+        room['game_state']['beams'] = {}
+    
+    # 更新光束数据（如果不存在则创建）
+    if request.sid not in room['game_state']['beams']:
+        # 如果光束不存在，重新创建
+        if beam_type == 'prince_purification':
+            room['game_state']['beams'][request.sid] = {
+                'x': data.get('x', 0),
+                'y': data.get('y', 0),
+                'angle': data.get('angle', 0),
+                'width': data.get('beamWidth', 50),
+                'isCrit': data.get('isCrit', False),
+                'start_time': time.time(),
+                'duration': 0.6,
+                'hitEnemies': [],
+                'beam_type': 'prince_purification'
+            }
+        else:
+            room['game_state']['beams'][request.sid] = {
+                'x': data.get('x', 0),
+                'y': data.get('y', 0),
+                'angle': data.get('angle', 0),
+                'width': data.get('beamWidth', 35),
+                'isCrit': data.get('isCrit', False),
+                'lastJudgmentTime': time.time(),
+                'hitEnemies': [],
+                'hitPlayers': [],
+                'beam_type': 'star_beam'
+            }
+    else:
+        beam = room['game_state']['beams'][request.sid]
+        beam['x'] = data.get('x', beam.get('x', 0))
+        beam['y'] = data.get('y', beam.get('y', 0))
+        beam['angle'] = data.get('angle', beam.get('angle', 0))
+        beam['width'] = data.get('beamWidth', beam.get('width', 30))
+        beam['isCrit'] = data.get('isCrit', beam.get('isCrit', False))
+
+@socketio.on('deactivate_beam')
+def handle_deactivate_beam(data):
+    """结束聚合光束"""
+    room_key = data.get('room_key')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['beams']:
+        return
+    
+    # 移除光束
+    if request.sid in room['game_state']['beams']:
+        del room['game_state']['beams'][request.sid]
+        print(f"星耀犊结束聚合光束: {request.sid}")
+
+@socketio.on('activate_q_skill')
+def handle_activate_q_skill(data):
+    """激活Q技能（公主蓉微笑拂晓约定或王子栗再创世）"""
+    room_key = data.get('room_key')
+    skill_type = data.get('skill_type')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    if skill_type == 'prince_recreation':
+        # 王子栗Q技能：再创世
+        player = room['game_state']['players'][request.sid]
+        if 'q_skills' not in room['game_state']:
+            room['game_state']['q_skills'] = {}
+        room['game_state']['q_skills'][request.sid] = {
+            'player_id': request.sid,
+            'start_time': time.time(),
+            'shatter_count': 0,
+            'max_shatters': 5,
+            'shatters': [],
+            'white_screen_start': 0,
+            'damage_count': 0,
+            'max_damages': 5,
+            'last_damage_time': 0
+        }
+        # 通知所有客户端激活神人模式
+        socketio.emit('divine_mode_start', {
+            'playerId': request.sid,
+            'x': player.get('x', 0),
+            'y': player.get('y', 0)
+        }, room=room_key)
+        print(f"⚡ 王子栗激活Q技能: {request.sid}, 位置: ({player.get('x', 0)}, {player.get('y', 0)})")
+    elif skill_type == 'princess_aura':
+        # 初始化Q技能光环
+        if 'q_skills' not in room['game_state']:
+            room['game_state']['q_skills'] = {}
+        
+        player = room['game_state']['players'][request.sid]
+        room['game_state']['q_skills'][request.sid] = {
+            'x': player.get('x', 0),
+            'y': player.get('y', 0),
+            'radius': 400,  # 800*800范围，半径400
+            'start_time': time.time(),
+            'duration': 8.0,
+            'last_heal_time': time.time(),
+            'last_damage_time': time.time()
+        }
+        print(f"🌸 公主蓉激活Q技能: {request.sid}, 位置: ({player.get('x', 0)}, {player.get('y', 0)})")
+
+@socketio.on('revive_teammate')
+def handle_revive_teammate(data):
+    """王子栗E技能：复活队友"""
+    room_key = data.get('room_key')
+    soul_ball_id = data.get('soul_ball_id')
+    x = data.get('x', 0)
+    y = data.get('y', 0)
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    game_state = room['game_state']
+    
+    # 检查是否是王子栗玩家
+    if request.sid not in game_state['players']:
+        return
+    
+    player = game_state['players'][request.sid]
+    if player.get('avatar', {}).get('character') != '王子栗':
+        return
+    
+    # 检查E技能冷却
+    # 这里简化处理，实际应该检查冷却时间
+    
+    # 检查灵魂球是否存在
+    if 'soul_balls' not in game_state or soul_ball_id not in game_state['soul_balls']:
+        print(f"❌ 灵魂球不存在: {soul_ball_id}")
+        return
+    
+    soul_ball = game_state['soul_balls'][soul_ball_id]
+    dead_player_id = soul_ball.get('dead_player_id')
+    
+    # 检查死亡玩家是否存在
+    if not dead_player_id or dead_player_id not in game_state['players']:
+        print(f"❌ 死亡玩家不存在: {dead_player_id}")
+        return
+    
+    dead_player = game_state['players'][dead_player_id]
+    
+    # 复活玩家
+    dead_player['hp'] = dead_player.get('maxHp', 1000)
+    dead_player['x'] = x
+    dead_player['y'] = y
+    
+    # 移除灵魂球
+    del game_state['soul_balls'][soul_ball_id]
+    
+    # 通知客户端玩家复活
+    socketio.emit('player_revived', {
+        'playerId': dead_player_id,
+        'playerName': dead_player.get('name', '未知'),
+        'hp': dead_player['hp'],
+        'x': dead_player['x'],
+        'y': dead_player['y'],
+        'soulBallId': soul_ball_id
+    }, room=room_key)
+    
+    print(f"💛 王子栗E技能：玩家 {dead_player.get('name', '未知')} 已复活")
+
+@socketio.on('deactivate_q_skill')
+def handle_deactivate_q_skill(data):
+    """结束Q技能（公主蓉微笑拂晓约定）"""
+    room_key = data.get('room_key')
+    skill_type = data.get('skill_type')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    if skill_type == 'princess_aura':
+        if 'q_skills' in room['game_state'] and request.sid in room['game_state']['q_skills']:
+            del room['game_state']['q_skills'][request.sid]
+            print(f"🌸 公主蓉结束Q技能: {request.sid}")
+
+@socketio.on('activate_lock_skill')
+def handle_activate_lock_skill(data):
+    """激活锁定技能（公主蓉右键）"""
+    room_key = data.get('room_key')
+    skill_type = data.get('skill_type')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    if skill_type == 'princess_lock':
+        # 初始化锁定状态
+        if 'lock_skills' not in room['game_state']:
+            room['game_state']['lock_skills'] = {}
+        
+        current_time = time.time()
+        room['game_state']['lock_skills'][request.sid] = {
+            'start_time': current_time,
+            'duration': 1.0,
+            'locked_targets': []  # 将在1秒后填充
+        }
+        print(f"🌸 公主蓉开始锁定: {request.sid}")
+
+@socketio.on('deactivate_lock_skill')
+def handle_deactivate_lock_skill(data):
+    """解除锁定技能（公主蓉右键）"""
+    room_key = data.get('room_key')
+    skill_type = data.get('skill_type')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    if skill_type == 'princess_lock':
+        game_state = room['game_state']
+        if 'lock_skills' in game_state and request.sid in game_state['lock_skills']:
+            del game_state['lock_skills'][request.sid]
+            print(f"🌸 公主蓉解除锁定技能: {request.sid}")
+
+@socketio.on('activate_e_skill')
+def handle_activate_e_skill(data):
+    """激活E技能（星耀犊强化增幅）"""
+    room_key = data.get('room_key')
+    skill_type = data.get('skill_type')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    if skill_type == 'star_boost':
+        # 初始化E技能状态
+        if 'e_skills' not in room['game_state']:
+            room['game_state']['e_skills'] = {}
+        
+        current_time = time.time()
+        room['game_state']['e_skills'][request.sid] = {
+            'start_time': current_time,
+            'duration': 10.0,  # 持续10秒
+            'attribute_power_bonus': 200,  # 200点属性强度
+            'healing_bonus': 0.20  # 20%治疗加成
+        }
+        print(f"🎵 星耀犊激活E技能: {request.sid}, 获得200点属性强度和20%治疗加成")
+
+@socketio.on('deactivate_e_skill')
+def handle_deactivate_e_skill(data):
+    """结束E技能（星耀犊强化增幅）"""
+    room_key = data.get('room_key')
+    skill_type = data.get('skill_type')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    if skill_type == 'star_boost':
+        game_state = room['game_state']
+        if 'e_skills' in game_state and request.sid in game_state['e_skills']:
+            del game_state['e_skills'][request.sid]
+            print(f"🎵 星耀犊结束E技能: {request.sid}")
+
+@socketio.on('apply_bubble_shield')
+def handle_apply_bubble_shield(data):
+    """赋予泡泡盾（幺幺俊羊羊右键）"""
+    room_key = data.get('room_key')
+    target_id = data.get('targetId')
+    owner_attack = data.get('ownerAttack', 0)  # 幺幺俊羊羊的攻击力
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    if target_id not in room['game_state']['players']:
+        return
+    
+    target_player = room['game_state']['players'][target_id]
+    owner_player = room['game_state']['players'][request.sid]
+    current_time = time.time()
+    
+    # 赋予泡泡盾：3秒无敌 + 伤害提高50% + 治疗幺幺俊羊羊
+    target_player['bubble_shield_end'] = current_time + 3.0
+    target_player['invincible'] = True
+    target_player['bubble_shield_damage_bonus'] = 0.5  # 伤害提高50%
+    target_player['bubble_shield_owner'] = request.sid  # 泡泡盾的拥有者（幺幺俊羊羊）
+    target_player['bubble_shield_owner_attack'] = owner_attack  # 幺幺俊羊羊的攻击力（用于治疗）
+    
+    print(f"🍎 幺幺俊羊羊赋予泡泡盾给: {target_id}, 攻击力: {owner_attack}")
+
+@socketio.on('pull_teammate_with_shield')
+def handle_pull_teammate_with_shield(data):
+    """拉队友并赋予泡泡盾（幺幺俊羊羊E技能）"""
+    room_key = data.get('room_key')
+    target_id = data.get('targetId')
+    target_x = data.get('targetX')
+    target_y = data.get('targetY')
+    pull_speed = data.get('pullSpeed', 20000)  # 每秒200像素，加快100倍
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    if target_id not in room['game_state']['players']:
+        return
+    
+    target_player = room['game_state']['players'][target_id]
+    owner_player = room['game_state']['players'][request.sid]
+    current_time = time.time()
+    
+    # 赋予泡泡盾：3秒无敌
+    target_player['bubble_shield_end'] = current_time + 3.0
+    target_player['invincible'] = True
+    target_player['bubble_shield_damage_bonus'] = 0.0  # E技能不提供伤害加成
+    target_player['bubble_shield_owner'] = request.sid
+    target_player['bubble_shield_owner_attack'] = owner_player.get('attack', 0)
+    
+    # 设置拉取状态（每秒200像素速度）
+    target_player['pulling'] = True
+    target_player['pull_target_x'] = target_x
+    target_player['pull_target_y'] = target_y
+    target_player['pull_speed'] = pull_speed
+    target_player['pull_start_time'] = current_time
+    
+    print(f"🍎 幺幺俊羊羊拉取队友: {target_id} 到 ({target_x}, {target_y}), 速度: {pull_speed}")
+
+@socketio.on('spawn_big_apple')
+def handle_spawn_big_apple(data):
+    """生成巨大苹果（幺幺俊羊羊Q技能）"""
+    room_key = data.get('room_key')
+    x = data.get('x')
+    y = data.get('y')
+    placement_damage = data.get('placementDamage', 1000)
+    healing_amount = data.get('healingAmount', 100)
+    explosion_damage = data.get('explosionDamage', 2000)
+    duration = data.get('duration', 6.0)
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    player = room['game_state']['players'][request.sid]
+    game_state = room['game_state']
+    
+    # 初始化巨大苹果字典
+    if 'big_apples' not in game_state:
+        game_state['big_apples'] = {}
+    
+    apple_id = f"big_apple_{request.sid}_{int(time.time() * 1000)}"
+    current_time = time.time()
+    
+    # 创建巨大苹果
+    game_state['big_apples'][apple_id] = {
+        'x': x,
+        'y': y,
+        'size': 200,
+        'start_time': current_time,
+        'duration': duration,
+        'placement_damage': placement_damage,
+        'healing_amount': healing_amount,
+        'explosion_damage': explosion_damage,
+        'owner': request.sid,
+        'owner_attack': player.get('attack', 0),
+        'last_heal_time': current_time
+    }
+    
+    # 放置时弹开敌人并造成伤害
+    for enemy in game_state.get('enemies', []):
+        if enemy.get('hp', 0) <= 0:
+            continue
+        
+        dx = enemy.get('x', 0) - x
+        dy = enemy.get('y', 0) - y
+        distance = (dx * dx + dy * dy) ** 0.5
+        
+        if distance <= 200:  # 200像素范围内
+            # 弹开敌人
+            if distance > 0:
+                knockback_dir_x = dx / distance
+                knockback_dir_y = dy / distance
+                # 击退速度：每秒667像素，持续0.3秒，总共击退200像素
+                enemy['knockback_vx'] = knockback_dir_x * 667
+                enemy['knockback_vy'] = knockback_dir_y * 667
+                enemy['knockback_end'] = current_time + 0.9
+            
+            # 造成伤害（考虑属性克制）
+            owner_player = game_state['players'][request.sid]
+            attacker_attribute = owner_player.get('attribute', '无属性')
+            defender_attribute = enemy.get('attribute', '无属性')
+            attacker_attribute_power = owner_player.get('attributePower', 0)
+            
+            # 导入calculate_attribute_damage函数
+            from game_combat import calculate_attribute_damage as calc_attr_dmg
+            final_damage, is_advantage = calc_attr_dmg(
+                placement_damage, attacker_attribute, defender_attribute, attacker_attribute_power
+            )
+            final_damage = int(final_damage)
+            if final_damage < 1:
+                final_damage = 1
+            
+            enemy['hp'] = max(0, enemy['hp'] - final_damage)
+            enemy['hit_flash_end'] = current_time + 0.2
+            
+            # 发送伤害数字事件
+            socketio.emit('enemy_hit', {
+                'enemyId': enemy['id'],
+                'x': enemy.get('x', x),
+                'y': enemy.get('y', y),
+                'damage': final_damage,
+                'isCrit': False,
+                'attribute': attacker_attribute
+            }, room=room_key)
+            
+            if enemy['hp'] <= 0:
+                socketio.emit('enemy_killed', {
+                    'enemyId': enemy.get('id'),
+                    'killerId': request.sid
+                }, room=room_key)
+    
+    print(f"🍎 幺幺俊羊羊生成巨大苹果: {apple_id}, 位置: ({x}, {y})")
+
+@socketio.on('spawn_poison_apple')
+def handle_spawn_poison_apple(data):
+    """生成毒苹果（幺幺俊羊羊E技能）"""
+    room_key = data.get('room_key')
+    x = data.get('x')
+    y = data.get('y')
+    explosion_damage = data.get('explosionDamage', 2000)
+    duration = data.get('duration', 10.0)
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    player = room['game_state']['players'][request.sid]
+    game_state = room['game_state']
+    
+    # 初始化毒苹果字典
+    if 'poison_apples' not in game_state:
+        game_state['poison_apples'] = {}
+    
+    apple_id = f"poison_apple_{request.sid}_{int(time.time() * 1000)}"
+    current_time = time.time()
+    
+    # 创建毒苹果
+    game_state['poison_apples'][apple_id] = {
+        'x': x,
+        'y': y,
+        'size': 100,
+        'start_time': current_time,
+        'duration': duration,
+        'explosion_damage': explosion_damage,
+        'owner': request.sid,
+        'owner_attack': player.get('attack', 0)
+    }
+    
+    print(f"🍎 幺幺俊羊羊生成毒苹果: {apple_id}, 位置: ({x}, {y})")
+
+@socketio.on('player_shoot')
+def handle_player_shoot(data):
+    """玩家射击"""
+    room_key = data.get('room_key')
+    bullet = data.get('bullet')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    # 检查是否是测试木桩（无法射击）
+    player = room['game_state']['players'].get(request.sid)
+    if player and (player.get('isDummy', False) or player.get('id', '').startswith('dummy_player_')):
+        return  # 测试木桩无法射击
+    
+    # 获取玩家角色属性和属性强度
+    # 注意：优先使用客户端发送的属性强度（因为可能包含E技能等临时加成）
+    if player:
+        player_character = player.get('avatar', {}).get('character', '勇者')
+        # 如果客户端没有发送属性，则从玩家数据中获取
+        if 'attribute' not in bullet or not bullet.get('attribute'):
+            bullet['attribute'] = CHARACTER_ATTRIBUTES.get(player_character, '无属性')
+        # 优先使用客户端发送的属性强度（可能包含E技能加成）
+        if 'attributePower' not in bullet or bullet.get('attributePower') is None:
+            bullet['attributePower'] = player.get('attributePower', 0)
+    else:
+        if 'attribute' not in bullet or not bullet.get('attribute'):
+            bullet['attribute'] = '无属性'
+        if 'attributePower' not in bullet or bullet.get('attributePower') is None:
+            bullet['attributePower'] = 0
+    
+    # 添加子弹ID和初始位置（用于碰撞检测）
+    bullet['id'] = f"{request.sid}_{len(room['game_state']['bullets'])}"
+    bullet['prev_x'] = bullet.get('x', 0)  # 保存上一帧位置
+    bullet['prev_y'] = bullet.get('y', 0)
+    
+    # 保存子弹的弹射属性
+    bullet['canBounce'] = bullet.get('canBounce', False)
+    bullet['bounceCount'] = bullet.get('bounceCount', 0)
+    bullet['isCrit'] = bullet.get('isCrit', False)  # 暴击标记（包括治疗暴击）
+    bullet['isQSkill'] = bullet.get('isQSkill', False)
+    bullet['canPenetrate'] = bullet.get('canPenetrate', False)
+    bullet['hitEnemies'] = bullet.get('hitEnemies', [])
+    
+    # 星耀犊音符子弹特殊属性
+    bullet['isHealing'] = bullet.get('isHealing', False)
+    bullet['healing'] = bullet.get('healing', 0)
+    bullet['targetId'] = bullet.get('targetId', None)  # 锁定目标ID
+    bullet['bulletImage'] = bullet.get('bulletImage', None)  # 子弹图标
+    bullet['bulletSpeed'] = bullet.get('bulletSpeed', 3500)  # 保存子弹速度（用于追踪）
+    
+    # 星耀犊尖刺子弹特殊属性
+    bullet['isSpike'] = bullet.get('isSpike', False)  # 是否为尖刺子弹
+    
+    # 确保isCrit是布尔值（修复JSON序列化问题）
+    is_crit_value = bullet.get('isCrit', False)
+    if isinstance(is_crit_value, str):
+        bullet['isCrit'] = is_crit_value.lower() in ('true', '1', 'yes')
+    else:
+        bullet['isCrit'] = bool(is_crit_value)
+    
+    # 调试日志：检查暴击信息
+    if bullet.get('isHealing', False):
+        print(f"🎵 音符子弹创建: 治疗量={bullet.get('healing', 0)}, 是否暴击={bullet.get('isCrit')} (类型: {type(bullet.get('isCrit'))}), 目标ID={bullet.get('targetId', None)}")
+    
+    # 添加到游戏状态
+    room['game_state']['bullets'].append(bullet)
+    
+    # 广播给所有玩家（包括射击者）
+    socketio.emit('player_shot', {'bullet': bullet}, room=room_key)
+
+@socketio.on('player_hit')
+def handle_player_hit(data):
+    """玩家被击中"""
+    room_key = data.get('room_key')
+    target_id = data.get('targetId')
+    damage = data.get('damage')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or target_id not in room['game_state']['players']:
+        return
+    
+    # 计算伤害
+    player = room['game_state']['players'][target_id]
+    player['hp'] -= damage
+    
+    print(f"玩家 {player['name']} 被击中，伤害: {damage}, 剩余HP: {player['hp']}")
+    
+    # 广播伤害信息
+    socketio.emit('player_hit', {
+        'playerId': target_id,
+        'hp': player['hp'],
+        'damage': damage
+    }, room=room_key)
+    
+    # 设置玩家受击闪烁
+    player['hit_flash_end'] = time.time() + 1.0
+    
+    # 检查是否死亡
+    if player['hp'] <= 0:
+        player['hp'] = 0
+        print(f"玩家 {player['name']} 已被击败")
+        
+        # 王子栗E技能：队友死亡时生成灵魂球
+        # 检查房间内是否有王子栗玩家
+        game_state = room['game_state']
+        for other_player_id, other_player in game_state['players'].items():
+            if other_player_id == target_id:
+                continue
+            other_character = other_player.get('avatar', {}).get('character', '未知')
+            if other_character == '王子栗':
+                # 创建灵魂球
+                if 'soul_balls' not in game_state:
+                    game_state['soul_balls'] = {}
+                soul_ball_id = f"soul_ball_{target_id}"
+                game_state['soul_balls'][soul_ball_id] = {
+                    'id': soul_ball_id,
+                    'x': player.get('x', 0),
+                    'y': player.get('y', 0),
+                    'dead_player_id': target_id,
+                    'dead_player_name': player.get('name', '未知'),
+                    'spawn_time': time.time()
+                }
+                # 通知客户端生成灵魂球
+                socketio.emit('soul_ball_spawned', {
+                    'soulBallId': soul_ball_id,
+                    'x': player.get('x', 0),
+                    'y': player.get('y', 0),
+                    'deadPlayerId': target_id,
+                    'deadPlayerName': player.get('name', '未知')
+                }, room=room_key)
+                print(f"💛 王子栗E技能：玩家 {player['name']} 死亡，生成灵魂球")
+                break
+        
+        check_game_over(room_key)
+
+@socketio.on('game_tick')
+def handle_game_tick(data):
+    """游戏循环更新（客户端定期发送）"""
+    room_key = data.get('room_key')
+    canvas_width = data.get('canvas_width', 1920)
+    canvas_height = data.get('canvas_height', 1080)
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    game_state = room['game_state']
+    
+    # 保存画布尺寸
+    game_state['canvas_width'] = canvas_width
+    game_state['canvas_height'] = canvas_height
+    
+    # 使用战斗模块处理游戏循环
+    process_game_tick(room_key, rooms, socketio, check_game_over)
+
+def check_game_over(room_key):
+    """检查游戏是否结束（玩家死亡时调用）"""
+    check_victory_defeat(room_key, rooms, socketio)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """玩家断开连接"""
+    for room_key in list(rooms.keys()):
+        room = rooms[room_key]
+        if request.sid in room['players']:
+            player_name = room['players'][request.sid].get('name', '未知玩家')
+            player_is_host = room['players'][request.sid].get('is_host', False)
+            
+            print(f"\n{'='*60}")
+            print(f"=== 玩家断开连接 ===")
+            print(f"玩家: {player_name}")
+            print(f"SID: {request.sid}")
+            print(f"房间: {room_key}")
+            print(f"是否房主: {player_is_host}")
+            
+            # 检查游戏是否已开始
+            game_started = 'game_state' in room and room['game_state'].get('started', False)
+            print(f"游戏是否已开始: {game_started}")
+            
+            if game_started:
+                # 游戏已开始，不删除房间，只标记玩家离线
+                print(f"⚠️ 游戏进行中，保留房间，等待玩家重新连接")
+                print(f"提示：玩家可能正在跳转到游戏页面")
+                # 暂时不从players中删除，等游戏页面重新连接
+                print(f"{'='*60}\n")
+            else:
+                # 游戏未开始，从大厅移除玩家
+                print(f"✓ 游戏未开始，从大厅移除玩家")
+                leave_room(room_key)
+                del room['players'][request.sid]
+                
+                # 如果是房主离开
+                if player_is_host:
+                    print(f"⚠️ 房主离开房间")
+                    
+                    # 如果房间里还有其他玩家，选择一个新房主
+                    if len(room['players']) > 0:
+                        # 选择第一个玩家作为新房主
+                        new_host_sid = list(room['players'].keys())[0]
+                        room['players'][new_host_sid]['is_host'] = True
+                        room['host_name'] = room['players'][new_host_sid]['name']
+                        
+                        print(f"✓ 选择新房主: {room['host_name']} (SID: {new_host_sid})")
+                        
+                        # 通知所有玩家房主更换
+                        socketio.emit('host_changed', {
+                            'message': f'房主已离开，{room["host_name"]} 成为新房主',
+                            'new_host': room['host_name']
+                        }, room=room_key)
+                        
+                        # 更新房间信息
+                        socketio.emit('update_room', get_room_info(room_key), room=room_key)
+                    else:
+                        # 房间空了，删除房间
+                        print(f"⚠️ 房间无玩家，删除房间")
+                        del rooms[room_key]
+                else:
+                    # 普通玩家离开，通知其他玩家
+                    print(f"✓ 普通玩家离开，通知其他玩家更新")
+                    socketio.emit('player_left_lobby', {
+                        'message': f'{player_name} 离开了房间',
+                        'player_name': player_name
+                    }, room=room_key)
+                    socketio.emit('update_room', get_room_info(room_key), room=room_key)
+                
+                print(f"{'='*60}\n")
+
+@socketio.on('request_team_stats')
+def handle_request_team_stats(data):
+    """请求队伍角色数据"""
+    room_key = data.get('room_key')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    users = load_user_data()
+    
+    # 获取房间内所有玩家的角色数据
+    team_stats = {}
+    
+    for sid, pinfo in room['players'].items():
+        player_name = pinfo.get('name', '未知玩家')
+        character_name = pinfo.get('avatar', {}).get('character', '勇者')
+        
+        # 尝试从game_state中获取玩家的属性（如果游戏已开始）
+        player_stats = None
+        if 'game_state' in room and sid in room['game_state'].get('players', {}):
+            game_player = room['game_state']['players'][sid]
+            # 从游戏状态中获取计算后的属性
+            player_stats = {
+                'attack': 0,  # 游戏状态中没有存储攻击力，需要从用户数据获取
+                'critRate': game_player.get('critRate', 0.0),
+                'critDamage': game_player.get('critDamage', 1.0),
+                'attributePower': game_player.get('attributePower', 0),
+                'hp': game_player.get('maxHp', 1000)
+            }
+        
+        # 尝试从所有用户中找到匹配的角色数据
+        player_username = None
+        for uname, udata in users.items():
+            if character_name in udata.get('characters', {}):
+                char_data = udata['characters'][character_name]
+                # 检查角色名是否匹配（更精确的匹配）
+                if char_data.get('attribute') == CHARACTER_ATTRIBUTES.get(character_name):
+                    player_username = uname
+                    break
+        
+        # 如果找到了用户数据，计算最终属性
+        if player_username and player_username in users:
+            char_data = users[player_username]['characters'][character_name]
+            base_stats = char_data.get('stats', {}).copy()
+            equipment_dict = char_data.get('equipment', {})
+            all_equipment = users[player_username].get('equipment', [])
+            
+            # 计算装备和套装效果（包含被动技能）
+            final_stats = calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, character_name)
+            
+            # 如果游戏状态中有更准确的属性，使用游戏状态的值（如暴击率、属性强度等）
+            if player_stats:
+                final_stats['critRate'] = player_stats['critRate']
+                final_stats['critDamage'] = player_stats['critDamage']
+                final_stats['attributePower'] = player_stats['attributePower']
+                final_stats['hp'] = player_stats['hp']
+        else:
+            # 如果找不到用户数据，使用默认值
+            default_stats = {
+                'attack': 0,
+                'critRate': 0.0,
+                'critDamage': 1.0,
+                'attributePower': 0,
+                'hp': 1000,
+                'damageBonus': 0.0,
+                'healingBonus': 0.0,
+                'reloadReduction': 0.0,
+                'rapidFire': 0.0,
+                'extraAmmo': 0.0
+            }
+            # 如果游戏状态中有数据，使用游戏状态的值
+            if player_stats:
+                default_stats.update(player_stats)
+            final_stats = default_stats
+        
+        team_stats[sid] = {
+            'name': player_name,
+            'character': character_name,
+            'stats': final_stats
+        }
+    
+    # 发送队伍数据给请求者
+    emit('team_stats', team_stats)
+
+def get_room_info(room_key):
+    """获取房间信息"""
+    print(f"\n{'='*60}")
+    print(f"=== get_room_info 函数 ===")
+    print(f"房间密钥: {room_key}")
+    
+    if room_key not in rooms:
+        print(f"❌ 错误：房间不存在")
+        print(f"{'='*60}\n")
+        return None
+    
+    room = rooms[room_key]
+    print(f"✓ 房间存在，原始房间数据:")
+    print(f"  host_name: '{room['host_name']}'")
+    print(f"  max_players: {room['max_players']}")
+    print(f"  map: '{room['map']}'")
+    print(f"  monster: '{room['monster']}'")
+    print(f"  players: {room['players']}")
+    
+    # 找到房主的session ID
+    host_sid = None
+    for sid, pinfo in room['players'].items():
+            if pinfo.get('is_host', False):
+                host_sid = sid
+                break
+    print(f"房主SID: {host_sid}")
+    print(f"当前请求SID: {request.sid}")
+    
+    room_info = {
+        'room_key': room_key,
+        'host': host_sid,
+        'host_name': room['host_name'],
+        'max_players': room['max_players'],
+        'map': room['map'],
+        'monster': room['monster'],
+        'players': [
+            {
+                'id': pid,
+                'name': pinfo['name'],
+                'ready': pinfo['ready'],
+                'is_host': pinfo['is_host'],
+                'avatar': pinfo.get('avatar', {'character': '勇者', 'color': 1})
+            }
+            for pid, pinfo in room['players'].items()
+        ],
+        'can_start': can_start_game(room_key),
+        'current_player_id': request.sid
+    }
+    
+    print(f"✓ 生成的房间信息:")
+    print(f"  room_key: '{room_info['room_key']}'")
+    print(f"  host_name: '{room_info['host_name']}'")
+    print(f"  max_players: {room_info['max_players']}")
+    print(f"  map: '{room_info['map']}'")
+    print(f"  monster: '{room_info['monster']}'")
+    print(f"  players数量: {len(room_info['players'])}")
+    for i, p in enumerate(room_info['players']):
+        print(f"    玩家{i+1}: id={p['id']}, name='{p['name']}', is_host={p['is_host']}")
+    print(f"  can_start: {room_info['can_start']}")
+    print(f"  current_player_id: {room_info['current_player_id']}")
+    print(f"{'='*60}\n")
+    
+    return room_info
+
+def can_start_game(room_key):
+    """检查是否可以开始游戏"""
+    if room_key not in rooms:
+        return False
+    
+    room = rooms[room_key]
+    
+    # 检查玩家数量是否达到要求
+    if len(room['players']) != room['max_players']:
+        return False
+    
+    # 检查所有玩家是否都准备
+    for player in room['players'].values():
+        if not player['ready']:
+            return False
+    
+    return True
+
+@app.route('/equip_character', methods=['POST'])
+def equip_character():
+    """为角色装备物品"""
+    if 'user_id' not in session:
+        return json.dumps({'success': False, 'message': '未登录'}), 401, {'Content-Type': 'application/json'}
+    
+    username = session['user_id']
+    data = request.get_json()
+    character = data.get('character')
+    slot = data.get('slot')  # 'weapon', 'accessory', 'headwear'
+    equipment_id = data.get('equipment_id')  # None表示卸下装备
+    
+    if not character or not slot:
+        return json.dumps({'success': False, 'message': '参数错误'}), 400, {'Content-Type': 'application/json'}
+    
+    users = load_user_data()
+    if username not in users:
+        return json.dumps({'success': False, 'message': '用户不存在'}), 404, {'Content-Type': 'application/json'}
+    
+    user_data = users[username]
+    
+    # 检查角色是否存在
+    if 'characters' not in user_data or character not in user_data['characters']:
+        return json.dumps({'success': False, 'message': '角色不存在'}), 404, {'Content-Type': 'application/json'}
+    
+    # 检查装备是否存在（如果提供了equipment_id）
+    if equipment_id:
+        equipment_list = user_data.get('equipment', [])
+        equipment = next((eq for eq in equipment_list if eq['id'] == equipment_id), None)
+        if not equipment:
+            return json.dumps({'success': False, 'message': '装备不存在'}), 404, {'Content-Type': 'application/json'}
+        
+        # 检查装备部位是否匹配
+        if equipment['slot'] != slot:
+            return json.dumps({'success': False, 'message': '装备部位不匹配'}), 400, {'Content-Type': 'application/json'}
+        
+        # 检查装备是否已被其他角色佩戴
+        for char_name, char_data in user_data['characters'].items():
+            if char_name == character:
+                continue
+            if char_data.get('equipment', {}).get(slot) == equipment_id:
+                return json.dumps({'success': False, 'message': '该装备已被其他角色佩戴'}), 400, {'Content-Type': 'application/json'}
+    
+    # 获取当前装备的ID（如果存在）
+    current_equipment_id = user_data['characters'][character].get('equipment', {}).get(slot)
+    
+    # 更新装备
+    if 'equipment' not in user_data['characters'][character]:
+        user_data['characters'][character]['equipment'] = {}
+    
+    user_data['characters'][character]['equipment'][slot] = equipment_id
+    
+    # 保存数据
+    if save_user_data(users):
+        return json.dumps({'success': True, 'message': '装备成功'}), 200, {'Content-Type': 'application/json'}
+    else:
+        return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
+
+@app.route('/upgrade_equipment', methods=['POST'])
+def upgrade_equipment():
+    """强化装备"""
+    # 检查登录状态
+    if not session.get('user_id'):
+        return json.dumps({'success': False, 'message': '请先登录'}), 401, {'Content-Type': 'application/json'}
+    
+    username = session.get('username')
+    equipment_id = request.json.get('equipment_id')
+    
+    if not equipment_id:
+        return json.dumps({'success': False, 'message': '装备ID不能为空'}), 400, {'Content-Type': 'application/json'}
+    
+    # 加载用户数据
+    users = load_user_data()
+    
+    if username not in users or 'equipment' not in users[username]:
+        return json.dumps({'success': False, 'message': '用户数据不存在'}), 404, {'Content-Type': 'application/json'}
+    
+    # 查找装备
+    equipment_list = users[username]['equipment']
+    equipment = None
+    equipment_index = None
+    for i, eq in enumerate(equipment_list):
+        if eq.get('id') == equipment_id:
+            equipment = eq
+            equipment_index = i
+            break
+    
+    if not equipment:
+        return json.dumps({'success': False, 'message': '装备不存在'}), 404, {'Content-Type': 'application/json'}
+    
+    # 确保装备有level字段（兼容旧数据）
+    if 'level' not in equipment:
+        equipment['level'] = 0
+    
+    # 检查装备等级
+    current_level = equipment.get('level', 0)
+    if current_level >= 5:
+        return json.dumps({'success': False, 'message': '装备已达到最高等级'}), 400, {'Content-Type': 'application/json'}
+    
+    # 检查叠志精心料数量
+    refinement_material = users[username].get('refinement_material', 0)
+    if refinement_material < 1:
+        return json.dumps({'success': False, 'message': '叠志精心料不足，需要1个'}), 400, {'Content-Type': 'application/json'}
+    
+    # 消耗1个叠志精心料
+    users[username]['refinement_material'] = refinement_material - 1
+    
+    # 强化装备
+    new_level = current_level + 1
+    equipment['level'] = new_level
+    
+    # 随机选择一条副词条进行提升
+    if not equipment.get('subStats') or len(equipment['subStats']) == 0:
+        return json.dumps({'success': False, 'message': '装备副词条不存在'}), 400, {'Content-Type': 'application/json'}
+    
+    # 确保所有副词条都有upgradeCount字段（兼容旧数据）
+    for sub_stat in equipment['subStats']:
+        if 'upgradeCount' not in sub_stat:
+            sub_stat['upgradeCount'] = 0
+    
+    # 随机选择一条副词条
+    selected_sub_stat = random.choice(equipment['subStats'])
+    stat_name = selected_sub_stat['name']
+    stat_type = selected_sub_stat['type']
+    
+    # 增加该副词条的强化次数
+    if 'upgradeCount' not in selected_sub_stat:
+        selected_sub_stat['upgradeCount'] = 0
+    selected_sub_stat['upgradeCount'] = selected_sub_stat.get('upgradeCount', 0) + 1
+    
+    # 根据属性类型生成提升值
+    if stat_name == '暴击率':
+        boost = random.uniform(0.025, 0.05)  # 2.5-5%
+        selected_sub_stat['value'] += boost
+    elif stat_name == '暴击伤害':
+        boost = random.uniform(0.05, 0.10)  # 5-10%
+        selected_sub_stat['value'] += boost
+    elif stat_name == '换弹减免':
+        boost = random.uniform(0.05, 0.10)  # 0.05-0.1秒
+        selected_sub_stat['value'] += boost
+    elif stat_name == '攻击力':
+        boost = random.uniform(0.05, 0.10)  # 5-10%
+        selected_sub_stat['value'] += boost
+    elif stat_name == '生命值':
+        boost = random.uniform(0.04, 0.08)  # 4-8%
+        selected_sub_stat['value'] += boost
+    elif stat_name == '属性强度':
+        boost = random.randint(5, 10)  # 5-10
+        selected_sub_stat['value'] += boost
+    else:
+        # 其他属性，根据类型提升
+        if stat_type == 'percent':
+            boost = random.uniform(0.05, 0.10)
+            selected_sub_stat['value'] += boost
+        elif stat_type == 'time':
+            boost = random.uniform(0.05, 0.10)
+            selected_sub_stat['value'] += boost
+        else:  # flat
+            boost = random.randint(5, 10)
+            selected_sub_stat['value'] += boost
+    
+    # 更新装备列表
+    equipment_list[equipment_index] = equipment
+    users[username]['equipment'] = equipment_list
+    
+    # 保存用户数据
+    if save_user_data(users):
+        return json.dumps({
+            'success': True,
+            'equipment': equipment,
+            'boosted_stat': {
+                'name': stat_name,
+                'boost': boost,
+                'type': stat_type
+            },
+            'refinement_material': users[username].get('refinement_material', 0)  # 返回剩余的道具数量
+        }), 200, {'Content-Type': 'application/json'}
+    else:
+        return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
+
+@app.route('/gacha')
+def gacha_page():
+    """抽卡页面"""
+    if not session.get('user_id'):
+        flash('请先登录', 'error')
+        return redirect(url_for('index'))
+    
+    username = session.get('username')
+    users = load_user_data()
+    
+    if username not in users:
+        flash('用户不存在', 'error')
+        return redirect(url_for('index'))
+    
+    wish_ticket = users[username].get('wish_ticket', 0)
+    refinement_material = users[username].get('refinement_material', 0)
+    pity_4star = users[username].get('gacha_pity_4star', 0)
+    pity_5star = users[username].get('gacha_pity_5star', 0)
+    
+    return render_template('gacha.html', 
+                         username=username,
+                         wish_ticket=wish_ticket,
+                         refinement_material=refinement_material,
+                         pity_4star=pity_4star,
+                         pity_5star=pity_5star)
+
+def perform_gacha(users, username, count=1):
+    """执行抽卡"""
+    results = []
+    pity_4star = users[username].get('gacha_pity_4star', 0)
+    pity_5star = users[username].get('gacha_pity_5star', 0)
+    
+    # 十连抽时，记录是否已经有四星或五星
+    has_4star_in_batch = False
+    has_5star_in_batch = False
+    
+    for i in range(count):
+        # 检查保底
+        must_4star = (pity_4star >= 9)  # 第10抽必出四星
+        must_5star = (pity_5star >= 49)  # 第50抽必出五星
+        
+        # 十连抽的特殊保底：如果前9抽都没有四星，第10抽必定是四星
+        if count == 10 and i == 9 and not has_4star_in_batch:
+            must_4star = True
+        
+        # 十连抽的特殊保底：如果前49抽都没有五星，第50抽必定是五星
+        if count == 10 and i == 9 and not has_5star_in_batch and pity_5star >= 49:
+            must_5star = True
+        
+        if must_5star:
+            # 必出五星
+            star = 5
+            pity_5star = 0
+            pity_4star = 0
+            has_5star_in_batch = True
+        elif must_4star:
+            # 必出四星
+            star = 4
+            pity_4star = 0
+            pity_5star += 1
+            has_4star_in_batch = True
+        else:
+            # 正常抽卡
+            rand = random.random()
+            if rand < 0.10:  # 10% 五星
+                star = 5
+                pity_5star = 0
+                pity_4star = 0
+                has_5star_in_batch = True
+            elif rand < 0.30:  # 20% 四星
+                star = 4
+                pity_4star = 0
+                pity_5star += 1
+                has_4star_in_batch = True
+            else:  # 70% 三星
+                star = 3
+                pity_4star += 1
+                pity_5star += 1
+        
+        # 每次循环都获取最新的武器列表（因为可能在上一次循环中添加了新武器）
+        user_weapons = users[username].get('weapons', [])
+        
+        # 生成奖励
+        reward_type = random.choice(['emoji', 'material', 'equipment', 'weapon'])
+        
+        if reward_type == 'emoji':
+            # 随机表情包（固定3星）
+            emoji_num = random.randint(1, 10)
+            results.append({
+                'type': 'emoji',
+                'star': 3,  # 表情包固定3星
+                'name': f'表情包{emoji_num}',
+                'image': f'/static/表情包/{emoji_num}.png'
+            })
+        elif reward_type == 'material':
+            # 叠志精心料x1（固定3星）
+            users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 1
+            results.append({
+                'type': 'material',
+                'star': 3,  # 叠志精心料固定3星
+                'name': '叠志精心料',
+                'count': 1
+            })
+        elif reward_type == 'equipment':
+            # 随机装备（固定3星）
+            equipment = generate_random_equipment()
+            if 'equipment' not in users[username]:
+                users[username]['equipment'] = []
+            users[username]['equipment'].append(equipment)
+            results.append({
+                'type': 'equipment',
+                'star': 3,  # 装备固定3星
+                'equipment': equipment
+            })
+        else:  # weapon
+            # 随机武器
+            weapon_name = random.choice(WEAPONS[star])
+            
+            # 检查是否重复
+            weapon_ids = [w.get('name') for w in user_weapons]
+            is_duplicate = weapon_name in weapon_ids
+            
+            if is_duplicate:
+                # 重复武器转换
+                if star == 3:
+                    users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 5
+                    results.append({
+                        'type': 'material',
+                        'star': star,
+                        'name': '叠志精心料',
+                        'count': 5,
+                        'original_weapon': weapon_name
+                    })
+                elif star == 4:
+                    users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 1
+                    results.append({
+                        'type': 'ticket',
+                        'star': star,
+                        'name': '神兵许愿单',
+                        'count': 1,
+                        'original_weapon': weapon_name
+                    })
+                else:  # star == 5
+                    users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 5
+                    results.append({
+                        'type': 'ticket',
+                        'star': star,
+                        'name': '神兵许愿单',
+                        'count': 5,
+                        'original_weapon': weapon_name
+                    })
+            else:
+                # 新武器
+                weapon = {
+                    'id': f"weapon_{int(time.time() * 1000)}_{random.randint(1000, 9999)}",
+                    'name': weapon_name,
+                    'star': star
+                }
+                user_weapons.append(weapon)
+                results.append({
+                    'type': 'weapon',
+                    'star': star,
+                    'weapon': weapon
+                })
+    
+    # 更新保底计数
+    users[username]['gacha_pity_4star'] = pity_4star
+    users[username]['gacha_pity_5star'] = pity_5star
+    users[username]['weapons'] = user_weapons
+    
+    return results
+
+@app.route('/gacha/draw', methods=['POST'])
+def gacha_draw():
+    """执行抽卡"""
+    if not session.get('user_id'):
+        return json.dumps({'success': False, 'message': '请先登录'}), 401, {'Content-Type': 'application/json'}
+    
+    username = session.get('username')
+    data = request.get_json()
+    count = data.get('count', 1)  # 1或10
+    
+    if count not in [1, 10]:
+        return json.dumps({'success': False, 'message': '无效的抽卡数量'}), 400, {'Content-Type': 'application/json'}
+    
+    users = load_user_data()
+    
+    if username not in users:
+        return json.dumps({'success': False, 'message': '用户不存在'}), 404, {'Content-Type': 'application/json'}
+    
+    # 检查神兵许愿单数量
+    wish_ticket = users[username].get('wish_ticket', 0)
+    if wish_ticket < count:
+        return json.dumps({'success': False, 'message': f'神兵许愿单不足，需要{count}个'}), 400, {'Content-Type': 'application/json'}
+    
+    # 消耗神兵许愿单
+    users[username]['wish_ticket'] = wish_ticket - count
+    
+    # 执行抽卡
+    results = perform_gacha(users, username, count)
+    
+    # 保存数据
+    if save_user_data(users):
+        return json.dumps({
+            'success': True,
+            'results': results,
+            'wish_ticket': users[username].get('wish_ticket', 0),
+            'refinement_material': users[username].get('refinement_material', 0),
+            'pity_4star': users[username].get('gacha_pity_4star', 0),
+            'pity_5star': users[username].get('gacha_pity_5star', 0)
+        }, ensure_ascii=False), 200, {'Content-Type': 'application/json'}
+    else:
+        return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
+
+if __name__ == '__main__':
+    # 生产环境：设置环境变量 DEBUG=False 来关闭调试模式
+    # 例如：export DEBUG=False 或在systemd服务文件中设置
+    debug_mode = os.environ.get('DEBUG', 'True').lower() == 'true'
+    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

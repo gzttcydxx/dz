@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>游戏中 - 击毙蕉形脸</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+        }
+        
+        #gameCanvas {
+            display: block;
+            background: #1a1a2e;
+            cursor: none; /* 隐藏鼠标 */
+        }
+        
+        /* HUD界面 */
+        #hud {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            color: white;
+            font-family: 'Arial', sans-serif;
+        }
+        
+        /* 玩家信息面板（左下角） */
+        #playerInfoPanel {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        #playerAvatar {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+        }
+        
+        /* 血量条 */
+        #healthBar {
+            width: 300px;
+            height: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid #fff;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        
+        #healthFill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff0000, #ff6b6b);
+            transition: width 0.3s ease;
+        }
+        
+        #healthBar .health-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        /* 技能按钮 */
+        #skillButtons {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .skill-btn {
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px solid #000;
+            border-radius: 8px;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+        }
+        
+        .skill-btn-large {
+            width: 80px;
+            height: 80px;
+            font-size: 32px;
+        }
+        
+        .skill-btn-small {
+            width: 60px;
+            height: 60px;
+            font-size: 18px;
+        }
+        
+        .skill-btn.active {
+            background: rgba(0, 100, 255, 0.9);
+            color: #fff;
+        }
+        
+        .skill-btn.cooldown {
+            background: rgba(255, 0, 0, 0.9);
+            color: #fff;
+        }
+        
+        .skill-btn.disabled {
+            background: rgba(128, 128, 128, 0.9);
+            color: #666;
+            cursor: not-allowed;
+        }
+        
+        #rightSkills {
+            position: absolute;
+            bottom: 10px;  /* 向下移动50px (30 + 50 = 80) */
+            right: 100px;   /* 向右移动100px (150 - 100 = 50) */
+            display: flex;
+            gap: 10px;
+        }
+        
+        /* 弹药显示 */
+        #ammoDisplay {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            font-size: 32px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 25px;
+            border-radius: 10px;
+            border: 2px solid #fff;
+        }
+        
+        #currentAmmo {
+            color: #ffeb3b;
+            font-size: 40px;
+        }
+        
+        #maxAmmo {
+            color: #ccc;
+            font-size: 24px;
+        }
+        
+        /* 玩家列表 */
+        #playerList {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #fff;
+            min-width: 200px;
+        }
+        
+        #playerList h3 {
+            margin-bottom: 10px;
+            font-size: 18px;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 5px;
+        }
+        
+        .player-info {
+            margin: 5px 0;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .player-name {
+            font-size: 14px;
+        }
+        
+        .player-hp {
+            font-size: 12px;
+            color: #ff6b6b;
+        }
+        
+        /* 准星 */
+        #crosshair {
+            position: fixed;  /* 改为fixed确保相对于视口定位 */
+            width: 30px;
+            height: 30px;
+            pointer-events: none;
+            z-index: 1000;
+            transform: translate(-50%, -50%);  /* 居中对齐 */
+        }
+        
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 0, 0, 0.9);
+        }
+        
+        #crosshair::before {
+            left: 50%;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            transform: translateX(-50%);
+        }
+        
+        #crosshair::after {
+            top: 50%;
+            left: 0;
+            height: 2px;
+            width: 100%;
+            transform: translateY(-50%);
+        }
+        
+        /* 换弹提示 */
+        #reloadingText {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.9);
+            display: none;
+            animation: pulse 0.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* 游戏结束界面 */
+        #gameOver {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        
+        #gameOver h1 {
+            font-size: 72px;
+            margin-bottom: 30px;
+            color: #fff;
+        }
+        
+        #gameOver button {
+            padding: 15px 40px;
+            font-size: 24px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            pointer-events: auto;
+        }
+        
+        #gameOver button:hover {
+            background: #45a049;
+        }
+        
+        /* 死亡屏幕覆盖层 */
+        #deathOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(128, 128, 128, 0.7);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1500;
+            pointer-events: none;
+        }
+        
+        #deathOverlay h1 {
+            font-size: 72px;
+            color: #fff;
+            text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.9);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="hud">
+        <!-- 准星 -->
+        <div id="crosshair"></div>
+        
+        <!-- 玩家信息面板（左下角） -->
+        <div id="playerInfoPanel">
+            <img id="playerAvatar" src="" alt="玩家头像">
+            <div id="healthBar" style="position: relative;">
+                <div id="healthFill" style="width: 100%;"></div>
+                <div class="health-text">1000 / 1000</div>
+            </div>
+        </div>
+        
+        <!-- 技能按钮 -->
+        <div id="skillButtons">
+            <!-- Q技能（中央大按钮） -->
+            <button id="skillQ" class="skill-btn skill-btn-large">Q</button>
+            
+            <!-- E技能和右键技能（右下角小按钮） -->
+            <div id="rightSkills">
+                <button id="skillE" class="skill-btn skill-btn-small">E</button>
+                <button id="skillRightClick" class="skill-btn skill-btn-small">右键</button>
+            </div>
+        </div>
+        
+        <!-- 弹药显示 -->
+        <div id="ammoDisplay">
+            <span id="currentAmmo">6</span> / <span id="maxAmmo">6</span>
+        </div>
+        
+        <!-- 玩家列表 -->
+        <div id="playerList">
+            <h3>玩家列表</h3>
+            <div id="playersContainer"></div>
+        </div>
+        
+        <!-- 换弹提示 -->
+        <div id="reloadingText">换弹中...</div>
+        
+        <!-- 死亡屏幕 -->
+        <div id="deathOverlay">
+            <h1>您已阵亡</h1>
+        </div>
+        
+        <!-- 游戏结束 -->
+        <div id="gameOver">
+            <h1 id="gameOverText">游戏结束</h1>
+            <button id="returnToLobbyBtn">返回大厅</button>
+        </div>
+        
+        <!-- 角色面板（按C键显示） -->
+        <div id="teamStatsPanel" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.95); border: 3px solid #667eea; border-radius: 15px; padding: 30px; max-width: 90%; max-height: 90vh; overflow-y: auto; z-index: 1000; pointer-events: auto; color: white; font-family: 'Microsoft YaHei', 'SimHei', sans-serif;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="color: #667eea; margin: 0;">队伍角色面板</h2>
+                <button id="closeTeamStatsBtn" style="background: #667eea; color: white; border: none; border-radius: 5px; padding: 8px 15px; cursor: pointer; font-size: 14px; font-weight: bold;">关闭 (C)</button>
+            </div>
+            <div id="teamStatsContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                <!-- 角色信息将在这里动态生成 -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- 传递服务器数据到JavaScript -->
+    <script>
+        const ROOM_KEY = "{{ room_key }}";
+        const PLAYER_NAME = "{{ player_name }}";
+        const PLAYER_AVATAR = {{ player_avatar | tojson }};
+        const MAP_NAME = "{{ map_name }}";
+        const MONSTER_TYPE = "{{ monster_type }}";
+        const USER_CHARACTER_DATA = {{ user_character_data | tojson if user_character_data else 'null' }};
+        
+        console.log('=== 游戏页面数据 ===');
+        console.log('ROOM_KEY:', ROOM_KEY);
+        console.log('PLAYER_NAME:', PLAYER_NAME);
+        console.log('PLAYER_AVATAR:', PLAYER_AVATAR);
+        console.log('MAP_NAME:', MAP_NAME);
+        console.log('MONSTER_TYPE:', MONSTER_TYPE);
+    </script>
+    
+    <!-- Socket.IO 客户端库（使用CDN） -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js" crossorigin="anonymous"></script>
+    
+    <script>
+        // 检查Socket.IO是否加载成功
+        if (typeof io === 'undefined') {
+            console.error('❌ Socket.IO加载失败！');
+            alert('Socket.IO加载失败，游戏无法运行。请刷新页面重试。');
+        } else {
+            console.log('✓ Socket.IO加载成功，版本:', io.version);
+        }
+    </script>
+    
+    <!-- 游戏逻辑 -->
+    <script src="/static/game.js"></script>
+</body>
+</html>
+

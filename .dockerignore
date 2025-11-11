@@ -1,0 +1,20 @@
+# 通用忽略
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
+
+# 构建产物
+dist/
+build/
+
+# 临时文件
+*.log
+
+# 不需要的示例与本地配置（按需保留）
+nginx.conf.example
+
+# 大型静态素材可以保留用于运行；如需减小镜像体积可改为挂载
+# static/

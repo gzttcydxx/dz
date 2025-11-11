@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>房间大厅</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="lobby">
+            <div class="lobby-header">
+                <h1>房间大厅</h1>
+                <div class="lobby-header-right">
+                    <div class="room-key-display">
+                        <span>房间密钥：</span>
+                        <span id="roomKeyDisplay" class="room-key">{{ room_key }}</span>
+                    </div>
+                    <button id="backToHomeBtn" class="btn btn-secondary">返回主页</button>
+                </div>
+            </div>
+
+            <div class="lobby-content">
+                <!-- 左侧：玩家列表 -->
+                <div class="lobby-left">
+                    <div class="players-panel">
+                        <h2>玩家列表 (<span id="currentPlayerCount">0</span>/<span id="maxPlayerCount">0</span>)</h2>
+                        <div id="playersList" class="players-list">
+                            <!-- 玩家列表将在这里动态生成 -->
+                        </div>
+                    </div>
+                    
+                    <!-- 房间设置 -->
+                    <div class="settings-panel">
+                        <h2>房间设置</h2>
+                        <div class="setting-item">
+                            <label>玩家人数：</label>
+                            <select id="maxPlayersLobby" disabled>
+                                <option value="1">1人（单人）</option>
+                                <option value="2">2人</option>
+                                <option value="3">3人</option>
+                                <option value="4">4人</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label>地图：</label>
+                            <select id="mapSelectLobby" disabled>
+                                <option value="寒清境">寒清境</option>
+                                <option value="虚星宇">虚星宇</option>
+                                <option value="灵堂">灵堂</option>
+                                <option value="荷田田">荷田田</option>
+                                <option value="寂寞地">寂寞地</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label>怪物：</label>
+                            <select id="monsterSelectLobby" disabled>
+                                <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
+                                <option value="诗宝蕉形脸">诗宝蕉形脸</option>
+                                <option value="笛者蕉形脸">笛者蕉形脸</option>
+                                <option value="热辣蕉形脸">热辣蕉形脸</option>
+                                <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：聊天面板 -->
+                <div class="lobby-right">
+                    <div class="chat-panel">
+                        <h2>大厅聊天</h2>
+                        <div id="chatMessages" class="chat-messages">
+                            <!-- 聊天消息将在这里动态生成 -->
+                        </div>
+                        <div class="chat-input-container">
+                            <div class="emoji-selector" id="emojiSelector">
+                                <button type="button" class="emoji-toggle-btn" id="emojiToggleBtn">😊</button>
+                                <div class="emoji-panel" id="emojiPanel" style="display: none;">
+                                    <!-- 表情包将在这里动态生成 -->
+                                </div>
+                            </div>
+                            <input type="text" id="chatInput" class="chat-input" placeholder="输入消息..." maxlength="200">
+                            <button id="sendChatBtn" class="btn btn-primary">发送</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部操作区 -->
+            <div class="lobby-footer">
+                <div class="left-actions">
+                    <button id="roomSettingsBtn" class="btn btn-warning" style="display: none;">更改房间设置</button>
+                </div>
+                <div class="button-container">
+                    <button id="startGameBtn" class="btn btn-warning btn-large" style="display: none;">开始挑战</button>
+                </div>
+                <div class="player-actions">
+                    <button id="changeNameBtn" class="btn btn-info">更改角色名</button>
+                    <button id="changeAvatarBtn" class="btn btn-info">更改角色形象</button>
+                    <button id="readyBtn" class="btn btn-ready">准备</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 更改房间设置弹窗 -->
+    <div id="roomSettingsModal" class="modal">
+        <div class="modal-content">
+            <h2>更改房间设置</h2>
+            <div class="form-group">
+                <label for="settingsMaxPlayers">玩家人数：</label>
+                <select id="settingsMaxPlayers">
+                    <option value="1">1人（单人）</option>
+                    <option value="2">2人</option>
+                    <option value="3">3人</option>
+                    <option value="4">4人</option>
+                </select>
+                <small id="playerCountWarning" style="color: #e74c3c; display: none; margin-top: 5px;"></small>
+            </div>
+            <div class="form-group">
+                <label for="settingsMap">地图：</label>
+                <select id="settingsMap">
+                    <option value="寒清境">寒清境</option>
+                    <option value="虚星宇">虚星宇</option>
+                    <option value="灵堂">灵堂</option>
+                    <option value="荷田田">荷田田</option>
+                    <option value="寂寞地">寂寞地</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="settingsMonster">怪物：</label>
+                <select id="settingsMonster">
+                    <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
+                    <option value="诗宝蕉形脸">诗宝蕉形脸</option>
+                    <option value="笛者蕉形脸">笛者蕉形脸</option>
+                    <option value="热辣蕉形脸">热辣蕉形脸</option>
+                    <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                </select>
+            </div>
+            <div class="button-group">
+                <button id="confirmSettingsBtn" class="btn btn-success">确认</button>
+                <button id="cancelSettingsBtn" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 更改房间设置弹窗 -->
+    <div id="changeRoomSettingsModal" class="modal">
+        <div class="modal-content">
+            <h2>更改房间设置</h2>
+            <div class="form-group">
+                <label for="modalMaxPlayers">玩家人数：</label>
+                <select id="modalMaxPlayers">
+                    <option value="1">1人（单人）</option>
+                    <option value="2">2人</option>
+                    <option value="3">3人</option>
+                    <option value="4">4人</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="modalMapSelect">选择地图：</label>
+                <select id="modalMapSelect">
+                    <option value="寒清境">寒清境</option>
+                    <option value="虚星宇">虚星宇</option>
+                    <option value="灵堂">灵堂</option>
+                    <option value="荷田田">荷田田</option>
+                    <option value="寂寞地">寂寞地</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="modalMonsterSelect">选择怪物：</label>
+                <select id="modalMonsterSelect">
+                    <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
+                    <option value="诗宝蕉形脸">诗宝蕉形脸</option>
+                    <option value="笛者蕉形脸">笛者蕉形脸</option>
+                    <option value="热辣蕉形脸">热辣蕉形脸</option>
+                    <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                </select>
+            </div>
+            <div class="button-group">
+                <button id="confirmRoomSettingsBtn" class="btn btn-success">确认修改</button>
+                <button id="cancelRoomSettingsBtn" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 更改角色名弹窗 -->
+    <div id="changeNameModal" class="modal">
+        <div class="modal-content">
+            <h2>更改角色名</h2>
+            <div class="form-group">
+                <label for="newPlayerName">新角色名：</label>
+                <input type="text" id="newPlayerName" placeholder="请输入新的角色名">
+            </div>
+            <div class="button-group">
+                <button id="confirmNameBtn" class="btn btn-success">确认</button>
+                <button id="cancelNameBtn" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 更改角色形象弹窗 -->
+    <div id="changeAvatarModal" class="modal">
+        <div class="modal-content avatar-modal">
+            <h2>更改角色形象</h2>
+            <div class="avatar-preview">
+                <img id="avatarPreview" src="" alt="角色形象">
+                <p id="avatarName">当前角色</p>
+            </div>
+            <div class="avatar-selectors">
+                <div class="selector-group">
+                    <label>选择角色：</label>
+                    <select id="characterSelect">
+                        <option value="公主蓉">公主蓉</option>
+                        <option value="王子栗">王子栗</option>
+                        <option value="幺幺俊羊羊">幺幺俊羊羊</option>
+                        <option value="勇者">勇者</option>
+                        <option value="星耀犊">星耀犊</option>
+                    </select>
+                </div>
+                <div class="selector-group">
+                    <label>选择配色：</label>
+                    <select id="colorSelect">
+                        <option value="1">配色 1</option>
+                        <option value="2">配色 2</option>
+                        <option value="3">配色 3</option>
+                    </select>
+                </div>
+            </div>
+            <div class="button-group">
+                <button id="confirmAvatarBtn" class="btn btn-success">确认</button>
+                <button id="cancelAvatarBtn" class="btn btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ROOM_KEY = "{{ room_key }}";
+        let PLAYER_NAME = "{{ player_name }}";
+        
+        console.log('=== 大厅页面加载 ===');
+        console.log('房间密钥:', ROOM_KEY);
+        console.log('从Session获取的玩家名:', PLAYER_NAME);
+        
+        // 更新localStorage中的room_key（确保与当前URL一致）
+        localStorage.setItem('temp_room_key', ROOM_KEY);
+        
+        // 如果session中没有名字，尝试从localStorage恢复
+        if (!PLAYER_NAME || PLAYER_NAME === '玩家' || PLAYER_NAME === '') {
+            const tempName = localStorage.getItem('temp_player_name');
+            const tempRoom = localStorage.getItem('temp_room_key');
+            console.log('尝试从localStorage恢复:', tempName, tempRoom, '当前房间:', ROOM_KEY);
+            
+            // 如果localStorage中的room_key与当前URL不匹配，清除它
+            if (tempRoom && tempRoom !== ROOM_KEY) {
+                console.warn('⚠️ localStorage中的room_key与URL不匹配，清除旧数据');
+                localStorage.removeItem('temp_room_key');
+                // 如果玩家名也不匹配，可能需要清除（但这里先保留，因为可能是同一玩家）
+            }
+            
+            if (tempName) {
+                PLAYER_NAME = tempName;
+                console.log('✓ 成功从localStorage恢复玩家名:', PLAYER_NAME);
+            } else {
+                console.error('无法获取玩家名！');
+            }
+        }
+        
+        console.log('✓ 最终玩家名字:', PLAYER_NAME);
+    </script>
+    <script src="/static/lobby.js"></script>
+</body>
+</html>
+

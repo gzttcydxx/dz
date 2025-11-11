@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>击毙蕉形脸:联机抵制（生日限定） - 主界面</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        .login-container {
+            max-width: 400px;
+            margin: 50px auto;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .login-container h2 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        /* 登录表单的标签使用白色（因为背景是半透明的） */
+        .login-container .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #fff;
+        }
+        
+        /* 弹窗中的标签使用深色（因为背景是白色） */
+        .modal-content .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: bold;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            box-sizing: border-box;
+        }
+        
+        /* 弹窗中的输入框使用深色文字 */
+        .modal-content .form-group input,
+        .modal-content .form-group select {
+            color: #333;
+            background-color: #fff;
+            border: 2px solid #ddd;
+        }
+        
+        .form-group input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+        
+        /* 弹窗中的占位符使用灰色 */
+        .modal-content .form-group input::placeholder {
+            color: #999;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .button-group button {
+            flex: 1;
+        }
+        
+        .user-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #fff;
+            text-align: right;
+        }
+        
+        .user-info button {
+            margin-left: 10px;
+            padding: 5px 15px;
+            font-size: 14px;
+        }
+        
+        .item-display {
+            position: absolute;
+            top: 80px;
+            right: 20px;
+            color: #fff;
+            text-align: right;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .item-display .item {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        
+        .item-display .item-name {
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .item-display .item-count {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        
+        .flash-messages {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+        }
+        
+        .flash-message {
+            padding: 10px 20px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            color: #fff;
+        }
+        
+        .flash-message.error {
+            background: rgba(255, 0, 0, 0.8);
+        }
+        
+        .flash-message.success {
+            background: rgba(0, 255, 0, 0.8);
+        }
+        
+        .flash-message.info {
+            background: rgba(0, 150, 255, 0.8);
+        }
+    </style>
+</head>
+<body>
+    <!-- Flash消息 -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="flash-messages">
+                {% for category, message in messages %}
+                    <div class="flash-message {{ category }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+    
+    {% if is_logged_in %}
+        <!-- 已登录状态 -->
+        <div class="user-info">
+            <span>欢迎，{{ username }}！</span>
+            <a href="/logout"><button class="btn btn-secondary">登出</button></a>
+        </div>
+        
+        <!-- 道具显示 -->
+        <div class="item-display">
+            <div class="item">
+                <span class="item-name">叠志精心料：</span>
+                <span class="item-count">{{ refinement_material }}</span>
+            </div>
+            <div class="item">
+                <span class="item-name">神兵许愿单：</span>
+                <span class="item-count">{{ wish_ticket }}</span>
+            </div>
+        </div>
+        
+        <div class="container">
+            <div class="main-menu">
+                <h1 class="game-title">击毙蕉形脸:联机抵制<br><span style="font-size: 0.6em;">（生日限定）</span></h1>
+                <div style="display: flex; gap: 15px; justify-content: center; align-items: center;">
+                    <button class="btn btn-info btn-large" id="viewCharactersBtn">查看角色</button>
+                    <button class="btn btn-warning btn-large" id="viewEquipmentBtn">查看装备</button>
+                    <button class="btn btn-success btn-large" id="gachaBtn">抽卡页面</button>
+                    <button class="btn btn-primary btn-large" id="startGameBtn">开始游戏</button>
+                </div>
+            </div>
+
+            <!-- 选择模式的弹窗 -->
+            <div id="modeModal" class="modal">
+                <div class="modal-content">
+                    <h2>选择游戏模式</h2>
+                    <div class="button-group">
+                        <button class="btn btn-success" id="createRoomBtn">创建房间</button>
+                        <button class="btn btn-info" id="joinRoomBtn">加入游戏</button>
+                    </div>
+                    <button class="btn btn-secondary" id="closeModeModal">返回</button>
+                </div>
+            </div>
+
+            <!-- 创建房间的弹窗 -->
+            <div id="createRoomModal" class="modal">
+                <div class="modal-content">
+                    <h2>创建房间</h2>
+                    <form id="createRoomForm" method="POST" action="/create_room">
+                        <div class="form-group">
+                            <label for="playerName">玩家昵称：</label>
+                            <input type="text" id="playerName" name="playerName" required placeholder="请输入昵称">
+                        </div>
+                        <div class="form-group">
+                            <label for="maxPlayers">玩家人数：</label>
+                            <select id="maxPlayers" name="maxPlayers">
+                                <option value="1">1人（单人）</option>
+                                <option value="2" selected>2人</option>
+                                <option value="3">3人</option>
+                                <option value="4">4人</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="mapSelect">选择地图：</label>
+                            <select id="mapSelect" name="mapSelect">
+                                <option value="寒清境">寒清境</option>
+                                <option value="虚星宇">虚星宇</option>
+                                <option value="灵堂">灵堂</option>
+                                <option value="荷田田">荷田田</option>
+                                <option value="寂寞地">寂寞地</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="monsterSelect">选择怪物：</label>
+                            <select id="monsterSelect" name="monsterSelect">
+                                <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
+                                <option value="诗宝蕉形脸">诗宝蕉形脸</option>
+                                <option value="笛者蕉形脸">笛者蕉形脸</option>
+                                <option value="热辣蕉形脸">热辣蕉形脸</option>
+                                <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                            </select>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn btn-success">确认创建</button>
+                            <button type="button" class="btn btn-secondary" id="closeCreateModal">取消</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 加入房间的弹窗 -->
+            <div id="joinRoomModal" class="modal">
+                <div class="modal-content">
+                    <h2>加入房间</h2>
+                    <form id="joinRoomForm" action="/join_room" method="POST">
+                        <div class="form-group">
+                            <label for="joinPlayerName">玩家昵称：</label>
+                            <input type="text" id="joinPlayerName" name="playerName" required placeholder="请输入昵称">
+                        </div>
+                        <div class="form-group">
+                            <label for="roomKey">房间密钥：</label>
+                            <input type="text" id="roomKey" name="roomKey" required placeholder="请输入6位房间密钥" maxlength="6">
+                        </div>
+                        <div id="joinError" class="error-message"></div>
+                        <div class="button-group">
+                            <button type="submit" class="btn btn-info">加入</button>
+                            <button type="button" class="btn btn-secondary" id="closeJoinModal">取消</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- 查看装备弹窗 -->
+            <div id="viewEquipmentModal" class="modal">
+                <div class="modal-content" style="width: 1000px; height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h2 style="margin-top: 0;">我的仓库</h2>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn btn-primary" id="viewEquipmentTab" style="padding: 8px 20px;">装备</button>
+                            <button class="btn btn-secondary" id="viewWeaponTab" style="padding: 8px 20px;">武器</button>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 20px; flex: 1; overflow: hidden;">
+                        <!-- 左侧：装备/武器列表 -->
+                        <div id="equipmentList" style="width: 250px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 10px;">
+                            <!-- 装备/武器列表将通过JavaScript动态生成 -->
+                        </div>
+                        
+                        <!-- 右侧：装备信息 -->
+                        <div id="equipmentInfoPanel" style="flex: 1; overflow-y: auto; padding: 20px; background: #ffffff; border-radius: 10px; min-width: 0;">
+                            <div id="equipmentInfoContent" style="color: #000;">
+                                <div style="text-align: center; color: rgba(0, 0, 0, 0.6); padding: 40px;">
+                                    请从左侧选择一个装备查看详细信息
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" id="closeViewEquipmentModal" style="margin-top: 20px; align-self: flex-end;">关闭</button>
+                </div>
+            </div>
+            
+            <!-- 查看角色弹窗 -->
+            <div id="viewCharactersModal" class="modal">
+                <div class="modal-content" style="width: 1000px; height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
+                    <h2 style="margin-top: 0;">我的角色</h2>
+                    <div style="display: flex; gap: 20px; flex: 1; overflow: hidden;">
+                        <!-- 左侧：角色列表 -->
+                        <div id="charactersList" style="width: 200px; flex-shrink: 0; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; padding-right: 10px;">
+                            {% for char_name in characters %}
+                                <div class="character-avatar-item" 
+                                     data-character="{{ char_name }}"
+                                     style="background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 10px; border: 2px solid rgba(255, 255, 255, 0.3); cursor: pointer; transition: all 0.3s; text-align: center;">
+                                    <img src="/static/{{ char_name }}1.png" 
+                                         alt="{{ char_name }}" 
+                                         style="width: 80px; height: 80px; border-radius: 8px; background: rgba(255, 255, 255, 0.1); display: block; margin: 0 auto 8px;"
+                                         onerror="this.style.display='none'">
+                                    <div style="color: #000; font-size: 0.9em; font-weight: bold;">{{ char_name }}</div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                        
+                        <!-- 右侧：角色信息 -->
+                        <div id="characterInfoPanel" style="flex: 1; overflow-y: auto; padding: 20px; background: #ffffff; border-radius: 10px; min-width: 0;">
+                            <div id="characterInfoContent" style="color: #000;">
+                                <div style="text-align: center; color: rgba(0, 0, 0, 0.6); padding: 40px;">
+                                    请从左侧选择一个角色查看详细信息
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" id="closeViewCharactersModal" style="margin-top: 20px; align-self: flex-end;">关闭</button>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <!-- 未登录状态 - 显示登录界面 -->
+        <div class="container">
+            <div class="main-menu">
+                <h1 class="game-title">击毙蕉形脸:联机抵制<br><span style="font-size: 0.6em;">（生日限定）</span></h1>
+            </div>
+            
+            <div class="login-container">
+                <h2>登录</h2>
+                <form method="POST" action="/login">
+                    <div class="form-group">
+                        <label for="loginUsername">用户名：</label>
+                        <input type="text" id="loginUsername" name="username" required placeholder="请输入用户名">
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">密码：</label>
+                        <input type="password" id="loginPassword" name="password" required placeholder="请输入密码">
+                    </div>
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary">登录</button>
+                    </div>
+                </form>
+                
+                <hr style="border-color: rgba(255,255,255,0.3); margin: 20px 0;">
+                
+                <h2>注册</h2>
+                <form method="POST" action="/register">
+                    <div class="form-group">
+                        <label for="regUsername">用户名：</label>
+                        <input type="text" id="regUsername" name="username" required placeholder="请输入用户名">
+                    </div>
+                    <div class="form-group">
+                        <label for="regPassword">密码：</label>
+                        <input type="password" id="regPassword" name="password" required placeholder="请输入密码">
+                    </div>
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-success">注册</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    {% endif %}
+
+    <script src="/static/main.js"></script>
+    {% if is_logged_in %}
+    <script>
+        // 将角色数据传递给JavaScript
+        window.characterData = {{ characters | tojson }};
+        window.userCharacters = {{ user_characters | tojson if user_characters else '{}' }};
+        window.characterSkills = {{ character_skills | tojson }};
+        window.userEquipment = {{ user_equipment | tojson if user_equipment else '[]' }};
+        window.userWeapons = {{ user_weapons | tojson if user_weapons else '[]' }};
+        // 武器配置（用于显示普通射击伤害和计算）
+        window.weapons = {
+            '勇者': { damage: 500, fireRate: 0.7, maxAmmo: 6, reloadTime: 1.2 },
+            '公主蓉': { damage: 0, fireRate: 0, maxAmmo: 0, reloadTime: 0 },
+            '王子栗': { damage: 0, fireRate: 0, maxAmmo: 0, reloadTime: 0 },
+            '幺幺俊羊羊': { damage: 0, fireRate: 0, maxAmmo: 0, reloadTime: 0 },
+            '星耀犊': { damage: 0, fireRate: 0, maxAmmo: 0, reloadTime: 0 }
+        };
+    </script>
+    {% endif %}
+</body>
+</html>

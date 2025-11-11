@@ -1,0 +1,33 @@
+services:
+  dzjxl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dzjxl
+    environment:
+      - DEBUG=False
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    networks:
+      - tunnel
+    ports:
+      - 8080:5000
+
+    # 如需生产环境使用 Gunicorn + Eventlet，可切换到下方 command
+    # command: ["gunicorn", "-k", "eventlet", "-w", "1", "-b", "0.0.0.0:5000", "main:app"]
+    # 当前使用 python main.py 以保持与现有入口一致
+
+    command: ["python", "main.py"]
+
+    # 健康检查：简单检查 HTTP 200
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/').read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+networks:
+  tunnel:
+    external: true

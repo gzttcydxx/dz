@@ -1,0 +1,19 @@
+[Unit]
+Description=Game Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/game
+Environment="PATH=/usr/bin:/usr/local/bin"
+Environment="DEBUG=False"
+ExecStart=/usr/bin/python3 /root/game/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
