@@ -39,6 +39,20 @@ rooms = {}
 # 用户数据文件路径
 USER_DATA_FILE = 'user_data.json'
 
+# 抽卡日志文件路径
+GACHA_LOG_FILE = 'gacha_log.txt'
+
+def log_gacha(username, message):
+    """记录抽卡日志到文件"""
+    try:
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = f"[{timestamp}] [{username}] {message}\n"
+        with open(GACHA_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(log_entry)
+    except Exception as e:
+        # 如果日志写入失败，静默处理，不影响抽卡功能
+        pass
+
 # 角色列表
 CHARACTERS = ['公主蓉', '王子栗', '幺幺俊羊羊', '勇者', '星耀犊']
 COLOR_VARIANTS = [1, 2, 3]
@@ -243,7 +257,7 @@ CHARACTER_SKILLS = {
         },
         'Q': {
             'name': '聚合光束',
-            'description': '发射一道聚合光束，持续4秒。光束每0.3秒判定一次，对敌人造成400点伤害，对玩家治疗120点生命值。基础暴击率50%，可叠加角色暴击率。暴击时光束宽度45，非暴击35。激活期间每秒恢复50生命值。充能：每秒1%，每次左键治疗命中玩家+2%，音爆触发+2%',
+            'description': '发射一道聚合光束，持续4秒。光束每0.3秒判定一次，对敌人造成400+(星耀犊生命值上限的10%)点伤害，对玩家治疗120点生命值。基础暴击率50%，可叠加角色暴击率。暴击时光束宽度45，非暴击35。激活期间每秒恢复50生命值。充能：每秒1%，每次左键治疗命中玩家+2%，音爆触发+2%',
             'cooldown': '充能制（100%）'
         },
         'E': {
@@ -673,6 +687,10 @@ def index():
         if username in users and 'weapons' in users[username]:
             user_weapons = users[username]['weapons']
     
+    # 准备敌人属性配置（从game_combat导入）
+    from game_combat import ENEMY_CONFIG
+    enemy_attributes = {name: config.get('attribute', '无属性') for name, config in ENEMY_CONFIG.items()}
+    
     return render_template('index.html', 
                          is_logged_in=is_logged_in, 
                          username=username,
@@ -682,7 +700,9 @@ def index():
                          user_equipment=user_equipment,
                          user_weapons=user_weapons,
                          refinement_material=refinement_material,
-                         wish_ticket=wish_ticket)
+                         wish_ticket=wish_ticket,
+                         character_attributes=CHARACTER_ATTRIBUTES,
+                         enemy_attributes=enemy_attributes)
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -939,7 +959,16 @@ def lobby(room_key):
     print(f"  player_name: '{player_name}'")
     print(f"{'='*60}\n")
     
-    return render_template('lobby.html', room_key=room_key, player_name=player_name)
+    # 准备敌人属性配置（从game_combat导入）
+    from game_combat import ENEMY_CONFIG, ATTRIBUTE_ADVANTAGE
+    enemy_attributes = {name: config.get('attribute', '无属性') for name, config in ENEMY_CONFIG.items()}
+    
+    return render_template('lobby.html', 
+                         room_key=room_key, 
+                         player_name=player_name,
+                         character_attributes=CHARACTER_ATTRIBUTES,
+                         enemy_attributes=enemy_attributes,
+                         attribute_advantage=ATTRIBUTE_ADVANTAGE)
 
 @app.route('/game/<room_key>')
 def game(room_key):
@@ -1556,11 +1585,24 @@ def handle_join_game(data):
     
     # 检查玩家是否已经在游戏中（防止重复加入）
     if request.sid in room['game_state']['players']:
-        print(f"⚠️ 玩家已在游戏中，刷新状态")
+        print(f"⚠️ 玩家已在游戏中，刷新状态（同一SID）")
         # 更新玩家信息（可能是刷新页面）
         player = room['game_state']['players'][request.sid]
+        
+        # 保持原有位置和技能状态
+        saved_x = player.get('x', x)
+        saved_y = player.get('y', y)
+        saved_skills = player.get('skills')
+        saved_hp = player.get('hp', 0)
+        is_dead = saved_hp <= 0
+        
         player['name'] = player_name
         player['avatar'] = avatar
+        # 保持原有位置（不更新为客户端传来的位置）
+        player['x'] = saved_x
+        player['y'] = saved_y
+        print(f"  保持原有位置: ({saved_x}, {saved_y})，忽略客户端传来的位置: ({x}, {y})")
+        
         # 刷新时重新获取用户数据，确保生命值和属性正确
         username = session.get('user_id')
         player['username'] = username  # 更新用户名
@@ -1600,15 +1642,168 @@ def handle_join_game(data):
         # 重新加入Socket房间
         join_room(room_key)
         
-        # 发送当前游戏状态
-        emit('game_state', {
+        # 发送当前游戏状态，包含技能状态
+        game_state_response = {
             'players': room['game_state']['players'],
             'bullets': room['game_state']['bullets'],
             'enemies': room['game_state'].get('enemies', []),
             'countdown': room['game_state'].get('countdown', 3),
-            'myPlayerId': request.sid
-        })
-        print(f"✓ 已发送游戏状态（刷新）")
+            'myPlayerId': request.sid,
+            'playerSkills': {},  # 总是包含技能状态字段
+            'soul_balls': room['game_state'].get('soul_balls', {}),  # 包含灵魂球状态
+            'q_skills': room['game_state'].get('q_skills', {}),  # 包含Q技能状态（王子栗、公主蓉）
+            'big_apples': room['game_state'].get('big_apples', {}),  # 包含巨大苹果状态
+            'poison_apples': room['game_state'].get('poison_apples', {})  # 包含毒苹果状态
+        }
+        
+        # 如果玩家有技能状态，包含在响应中
+        if player.get('skills') is not None:
+            game_state_response['playerSkills'][request.sid] = player['skills']
+            print(f"  包含技能状态: {player['skills']}")
+        
+        emit('game_state', game_state_response)
+        print(f"✓ 已发送游戏状态（刷新），位置=({saved_x}, {saved_y})")
+        print(f"{'='*60}\n")
+        return
+    
+    # 检查是否已有同名玩家（刷新页面时，SID会变化，但玩家名相同）
+    # 优先使用username匹配（更准确），如果没有username则使用player_name
+    username = session.get('user_id')
+    existing_player_sid = None
+    existing_player = None
+    for sid, player_data in room['game_state']['players'].items():
+        # 跳过测试木桩
+        if player_data.get('isDummy', False) or sid.startswith('dummy_player_'):
+            continue
+        # 优先使用username匹配（如果存在）
+        if username and player_data.get('username') == username:
+            existing_player_sid = sid
+            existing_player = player_data
+            break
+        # 如果没有username，则使用玩家名匹配
+        elif not username and player_data.get('name') == player_name:
+            existing_player_sid = sid
+            existing_player = player_data
+            break
+    
+    if existing_player_sid and existing_player:
+        print(f"⚠️ 检测到同名玩家已存在（可能是刷新页面）")
+        print(f"  旧SID: {existing_player_sid}")
+        print(f"  新SID: {request.sid}")
+        print(f"  玩家名: {player_name}")
+        print(f"  当前HP: {existing_player.get('hp', 0)}")
+        
+        # 保存原有玩家的所有状态
+        old_player_data = existing_player.copy()
+        
+        # 检查玩家是否已死亡
+        is_dead = existing_player.get('hp', 0) <= 0
+        if is_dead:
+            print(f"⚠️ 玩家已死亡，允许重新加入但保持死亡状态")
+        else:
+            print(f"✓ 玩家未死亡，用新SID替换旧SID，保持原有状态（位置、技能冷却、大招能量）")
+        
+        # 删除旧玩家数据
+        del room['game_state']['players'][existing_player_sid]
+        
+        # 更新玩家信息（保持原有HP、位置、技能状态等）
+        old_player_data['id'] = request.sid  # 更新ID为新SID
+        old_player_data['name'] = player_name  # 更新名字（可能变化）
+        old_player_data['avatar'] = avatar  # 更新角色形象（可能变化）
+        old_player_data['username'] = session.get('user_id')  # 更新用户名
+        
+        # 保持原有位置（不更新为客户端传来的位置）
+        # 明确不更新x和y，使用原有的位置
+        saved_x = old_player_data.get('x', x)  # 保存原有位置，如果没有则使用默认值
+        saved_y = old_player_data.get('y', y)
+        old_player_data['x'] = saved_x  # 确保使用原有位置
+        old_player_data['y'] = saved_y
+        print(f"  保持原有位置: ({saved_x}, {saved_y})，忽略客户端传来的位置: ({x}, {y})")
+        
+        # 确保技能状态字段存在（如果不存在则初始化为None，等待客户端同步）
+        if 'skills' not in old_player_data:
+            old_player_data['skills'] = None
+            print(f"  警告：玩家没有技能状态，将等待客户端同步")
+        
+        # 重新计算属性（但保持HP不变，如果已死亡则保持HP=0）
+        username = session.get('user_id')
+        character_name = avatar.get('character', '勇者')
+        if username:
+            users = load_user_data()
+            if username in users and 'characters' in users[username]:
+                if character_name in users[username]['characters']:
+                    char_data = users[username]['characters'][character_name]
+                    base_stats = char_data.get('stats', {}).copy()
+                    equipment_dict = char_data.get('equipment', {})
+                    all_equipment = users[username].get('equipment', [])
+                    
+                    # 计算装备和套装效果（包含被动技能）
+                    final_stats = calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, character_name)
+                    
+                    # 更新属性（但保持HP不变）
+                    old_player_data['maxHp'] = final_stats.get('hp', old_player_data.get('maxHp', 1000))
+                    old_player_data['critRate'] = final_stats.get('critRate', 0.0)
+                    old_player_data['critDamage'] = final_stats.get('critDamage', 1.0)
+                    old_player_data['attributePower'] = final_stats.get('attributePower', 0)
+                    old_player_data['attack'] = final_stats.get('attack', 0)
+                    old_player_data['damageBonus'] = final_stats.get('damageBonus', 0.0)
+                    old_player_data['healingBonus'] = final_stats.get('healingBonus', 0.0)
+                    old_player_data['reloadReduction'] = final_stats.get('reloadReduction', 0.0)
+                    old_player_data['rapidFire'] = final_stats.get('rapidFire', 0.0)
+                    old_player_data['extraAmmo'] = final_stats.get('extraAmmo', 0.0)
+                    old_player_data['attribute'] = CHARACTER_ATTRIBUTES.get(character_name, '无属性')
+                    
+                    # 如果当前HP超过了新的maxHp，则调整为maxHp（但如果是死亡状态则保持0）
+                    if not is_dead and old_player_data.get('hp', 0) > old_player_data['maxHp']:
+                        old_player_data['hp'] = old_player_data['maxHp']
+                    elif is_dead:
+                        old_player_data['hp'] = 0  # 确保死亡状态保持
+        
+        # 用新SID添加玩家（保持原有状态，包括位置、技能状态等）
+        room['game_state']['players'][request.sid] = old_player_data
+        
+        # 更新所有毒苹果的owner（如果owner是旧的socket ID，则更新为新的socket ID）
+        if 'poison_apples' in room['game_state']:
+            for apple_id, apple in room['game_state']['poison_apples'].items():
+                if apple.get('owner') == existing_player_sid:
+                    apple['owner'] = request.sid
+                    # 同时更新owner_attack和owner_damage_bonus（使用新玩家的最新值）
+                    apple['owner_attack'] = old_player_data.get('attack', apple.get('owner_attack', 0))
+                    apple['owner_damage_bonus'] = old_player_data.get('damageBonus', apple.get('owner_damage_bonus', 0.0))
+                    print(f"🍎 更新毒苹果 {apple_id} 的owner: {existing_player_sid} -> {request.sid}")
+                    print(f"🍎 更新毒苹果 {apple_id} 的属性: attack={apple['owner_attack']}, damageBonus={apple['owner_damage_bonus']}")
+        
+        # 加入Socket房间
+        join_room(room_key)
+        
+        # 发送当前游戏状态，包含技能状态
+        game_state_response = {
+            'players': room['game_state']['players'],
+            'bullets': room['game_state']['bullets'],
+            'enemies': room['game_state'].get('enemies', []),
+            'countdown': room['game_state'].get('countdown', 3),
+            'myPlayerId': request.sid,
+            'playerSkills': {},  # 总是包含技能状态字段
+            'soul_balls': room['game_state'].get('soul_balls', {}),  # 包含灵魂球状态
+            'q_skills': room['game_state'].get('q_skills', {}),  # 包含Q技能状态（王子栗、公主蓉）
+            'big_apples': room['game_state'].get('big_apples', {}),  # 包含巨大苹果状态
+            'poison_apples': room['game_state'].get('poison_apples', {})  # 包含毒苹果状态
+        }
+        
+        # 如果玩家有技能状态，包含在响应中
+        if old_player_data.get('skills') is not None:
+            game_state_response['playerSkills'][request.sid] = old_player_data['skills']
+            print(f"  包含技能状态: {old_player_data['skills']}")
+        else:
+            print(f"  警告：玩家技能状态为None，客户端需要同步")
+        
+        emit('game_state', game_state_response)
+        
+        # 通知其他玩家玩家重新连接（不发送player_joined，因为玩家已经存在）
+        status_msg = "死亡状态" if is_dead else f"HP={old_player_data.get('hp', 0)}/{old_player_data.get('maxHp', 1000)}"
+        print(f"✓ 玩家重新连接成功，保持原有状态: {status_msg}, 位置=({old_player_data.get('x', 0)}, {old_player_data.get('y', 0)})")
+        if 'skills' in old_player_data:
+            print(f"  技能状态已恢复: {old_player_data['skills']}")
         print(f"{'='*60}\n")
         return
     
@@ -1704,19 +1899,29 @@ def handle_join_game(data):
         'reloadReduction': final_stats_for_player.get('reloadReduction', 0.0) if final_stats_for_player else 0.0,  # 换弹减免
         'rapidFire': final_stats_for_player.get('rapidFire', 0.0) if final_stats_for_player else 0.0,  # 快速射击
         'extraAmmo': final_stats_for_player.get('extraAmmo', 0.0) if final_stats_for_player else 0.0,  # 额外弹容
-        'attribute': CHARACTER_ATTRIBUTES.get(avatar.get('character', '勇者'), '无属性')  # 角色属性
+        'attribute': CHARACTER_ATTRIBUTES.get(avatar.get('character', '勇者'), '无属性'),  # 角色属性
+        'skills': None  # 技能状态（冷却时间、充能值等），由客户端同步
     }
     print(f"✓ 已添加玩家到游戏状态")
     print(f"游戏中玩家数: {len(room['game_state']['players'])}")
     
     # 通知该玩家当前游戏状态
-    emit('game_state', {
+    game_state_response = {
         'players': room['game_state']['players'],
         'bullets': room['game_state']['bullets'],
         'enemies': room['game_state'].get('enemies', []),
         'countdown': room['game_state'].get('countdown', 3),
-        'myPlayerId': request.sid
-    })
+        'myPlayerId': request.sid,
+        'playerSkills': {},  # 总是包含技能状态字段
+        'soul_balls': room['game_state'].get('soul_balls', {})  # 包含灵魂球状态
+    }
+    
+    # 如果玩家有技能状态，包含在响应中（首次加入时通常为None）
+    player = room['game_state']['players'][request.sid]
+    if player.get('skills') is not None:
+        game_state_response['playerSkills'][request.sid] = player['skills']
+    
+    emit('game_state', game_state_response)
     print(f"✓ 已发送游戏状态给当前玩家")
     
     # 通知其他玩家新玩家加入
@@ -1756,6 +1961,26 @@ def handle_player_move(data):
         'y': y,
         'angle': angle
     }, room=room_key, skip_sid=request.sid)
+
+@socketio.on('sync_skills_state')
+def handle_sync_skills_state(data):
+    """同步玩家技能状态（冷却时间、充能值等）"""
+    room_key = data.get('room_key')
+    skills_state = data.get('skills')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room or request.sid not in room['game_state']['players']:
+        return
+    
+    # 更新玩家的技能状态
+    player = room['game_state']['players'][request.sid]
+    if skills_state:
+        player['skills'] = skills_state
+        # 可选：记录最后更新时间，用于验证
+        player['skills_last_sync'] = time.time()
 
 @socketio.on('update_lock_target')
 def handle_update_lock_target(data):
@@ -2007,17 +2232,24 @@ def handle_revive_teammate(data):
     # 移除灵魂球
     del game_state['soul_balls'][soul_ball_id]
     
-    # 通知客户端玩家复活
+    # 通知客户端玩家复活（确保使用最新的玩家名字）
+    player_name = dead_player.get('name', '未知')
+    # 如果玩家名字为空，尝试从username获取
+    if not player_name or player_name == '未知':
+        username = dead_player.get('username')
+        if username:
+            player_name = username
+    
     socketio.emit('player_revived', {
         'playerId': dead_player_id,
-        'playerName': dead_player.get('name', '未知'),
+        'playerName': player_name,
         'hp': dead_player['hp'],
         'x': dead_player['x'],
         'y': dead_player['y'],
         'soulBallId': soul_ball_id
     }, room=room_key)
     
-    print(f"💛 王子栗E技能：玩家 {dead_player.get('name', '未知')} 已复活")
+    print(f"💛 王子栗E技能：玩家 {player_name} 已复活")
 
 @socketio.on('deactivate_q_skill')
 def handle_deactivate_q_skill(data):
@@ -2036,6 +2268,62 @@ def handle_deactivate_q_skill(data):
         if 'q_skills' in room['game_state'] and request.sid in room['game_state']['q_skills']:
             del room['game_state']['q_skills'][request.sid]
             print(f"🌸 公主蓉结束Q技能: {request.sid}")
+
+@socketio.on('interrupt_prince_q_skill')
+def handle_interrupt_prince_q_skill(data):
+    """中断王子栗Q技能并解除敌人禁锢状态"""
+    room_key = data.get('room_key')
+    
+    if room_key not in rooms:
+        return
+    
+    room = rooms[room_key]
+    if 'game_state' not in room:
+        return
+    
+    game_state = room['game_state']
+    
+    # 删除Q技能状态
+    if 'q_skills' in game_state and request.sid in game_state['q_skills']:
+        del game_state['q_skills'][request.sid]
+        print(f"⚡ 王子栗Q技能被中断: {request.sid}")
+    
+    # 更新玩家技能状态：将Q技能充能设置为25%
+    if request.sid in game_state['players']:
+        player = game_state['players'][request.sid]
+        if player.get('skills') is not None:
+            if 'Q' in player['skills']:
+                max_charge = player['skills']['Q'].get('maxCharge', 100)
+                refund_charge = int(max_charge * 0.25)
+                player['skills']['Q']['charge'] = refund_charge
+                player['skills']['Q']['active'] = False
+                print(f"⚡ 王子栗Q技能充能已更新为25%: {refund_charge}%")
+    
+    # 解除所有敌人的禁锢状态（同时解除frozen和stunned状态）
+    enemies = game_state.get('enemies', [])
+    for enemy in enemies:
+        if enemy.get('frozen', False) or enemy.get('stunned', False):
+            enemy['frozen'] = False
+            enemy['frozen_end'] = 0
+            enemy['stunned'] = False
+            enemy['stun_end'] = 0
+            print(f"⚡ 解除敌人禁锢: {enemy.get('type', '未知')}")
+    
+    # 通知所有客户端解除敌人禁锢并同步技能状态更新
+    socketio.emit('enemies_unfrozen', {
+        'playerId': request.sid
+    }, room=room_key)
+    
+    # 同步更新玩家的技能状态（确保客户端收到充能更新）
+    if request.sid in game_state['players']:
+        player = game_state['players'][request.sid]
+        if player.get('skills') is not None:
+            socketio.emit('skill_state_updated', {
+                'playerId': request.sid,
+                'skills': player['skills']
+            }, room=room_key)
+    
+    print(f"✓ 王子栗Q技能中断完成，已解除所有敌人禁锢状态，充能已更新为25%")
 
 @socketio.on('activate_lock_skill')
 def handle_activate_lock_skill(data):
@@ -2158,44 +2446,7 @@ def handle_apply_bubble_shield(data):
     
     print(f"🍎 幺幺俊羊羊赋予泡泡盾给: {target_id}, 攻击力: {owner_attack}")
 
-@socketio.on('pull_teammate_with_shield')
-def handle_pull_teammate_with_shield(data):
-    """拉队友并赋予泡泡盾（幺幺俊羊羊E技能）"""
-    room_key = data.get('room_key')
-    target_id = data.get('targetId')
-    target_x = data.get('targetX')
-    target_y = data.get('targetY')
-    pull_speed = data.get('pullSpeed', 20000)  # 每秒200像素，加快100倍
-    
-    if room_key not in rooms:
-        return
-    
-    room = rooms[room_key]
-    if 'game_state' not in room or request.sid not in room['game_state']['players']:
-        return
-    
-    if target_id not in room['game_state']['players']:
-        return
-    
-    target_player = room['game_state']['players'][target_id]
-    owner_player = room['game_state']['players'][request.sid]
-    current_time = time.time()
-    
-    # 赋予泡泡盾：3秒无敌
-    target_player['bubble_shield_end'] = current_time + 3.0
-    target_player['invincible'] = True
-    target_player['bubble_shield_damage_bonus'] = 0.0  # E技能不提供伤害加成
-    target_player['bubble_shield_owner'] = request.sid
-    target_player['bubble_shield_owner_attack'] = owner_player.get('attack', 0)
-    
-    # 设置拉取状态（每秒200像素速度）
-    target_player['pulling'] = True
-    target_player['pull_target_x'] = target_x
-    target_player['pull_target_y'] = target_y
-    target_player['pull_speed'] = pull_speed
-    target_player['pull_start_time'] = current_time
-    
-    print(f"🍎 幺幺俊羊羊拉取队友: {target_id} 到 ({target_x}, {target_y}), 速度: {pull_speed}")
+# 幺幺俊羊羊E技能现在是放置毒苹果，不再需要拉取队友功能，此函数已删除
 
 @socketio.on('spawn_big_apple')
 def handle_spawn_big_apple(data):
@@ -2330,7 +2581,8 @@ def handle_spawn_poison_apple(data):
         'duration': duration,
         'explosion_damage': explosion_damage,
         'owner': request.sid,
-        'owner_attack': player.get('attack', 0)
+        'owner_attack': player.get('attack', 0),
+        'owner_damage_bonus': player.get('damageBonus', 0.0)  # 保存伤害加成，用于刷新后计算
     }
     
     print(f"🍎 幺幺俊羊羊生成毒苹果: {apple_id}, 位置: ({x}, {y})")
@@ -2456,12 +2708,18 @@ def handle_player_hit(data):
                 if 'soul_balls' not in game_state:
                     game_state['soul_balls'] = {}
                 soul_ball_id = f"soul_ball_{target_id}"
+                # 确保玩家名字正确（优先使用name，如果为空则使用username）
+                player_name = player.get('name') or player.get('username', '未知')
+                # 如果是测试木桩，确保名字正确
+                if player.get('isDummy', False) or target_id.startswith('dummy_player_'):
+                    player_name = '测试木桩'
+                
                 game_state['soul_balls'][soul_ball_id] = {
                     'id': soul_ball_id,
                     'x': player.get('x', 0),
                     'y': player.get('y', 0),
                     'dead_player_id': target_id,
-                    'dead_player_name': player.get('name', '未知'),
+                    'dead_player_name': player_name,
                     'spawn_time': time.time()
                 }
                 # 通知客户端生成灵魂球
@@ -2470,7 +2728,7 @@ def handle_player_hit(data):
                     'x': player.get('x', 0),
                     'y': player.get('y', 0),
                     'deadPlayerId': target_id,
-                    'deadPlayerName': player.get('name', '未知')
+                    'deadPlayerName': player_name
                 }, room=room_key)
                 print(f"💛 王子栗E技能：玩家 {player['name']} 死亡，生成灵魂球")
                 break
@@ -2586,21 +2844,55 @@ def handle_request_team_stats(data):
     # 获取房间内所有玩家的角色数据
     team_stats = {}
     
-    for sid, pinfo in room['players'].items():
+    # 优先从game_state获取玩家列表（如果游戏已开始）
+    players_to_iterate = {}
+    if 'game_state' in room and 'players' in room['game_state']:
+        # 游戏已开始，从game_state获取玩家
+        for sid, game_player in room['game_state']['players'].items():
+            # 从room['players']获取玩家基本信息
+            if sid in room['players']:
+                players_to_iterate[sid] = {
+                    'pinfo': room['players'][sid],
+                    'game_player': game_player
+                }
+            else:
+                # 如果不在room['players']中，使用game_player的数据
+                players_to_iterate[sid] = {
+                    'pinfo': {
+                        'name': game_player.get('name', '未知玩家'),
+                        'avatar': game_player.get('avatar', {})
+                    },
+                    'game_player': game_player
+                }
+    else:
+        # 游戏未开始，从room['players']获取
+        for sid, pinfo in room['players'].items():
+            players_to_iterate[sid] = {
+                'pinfo': pinfo,
+                'game_player': None
+            }
+    
+    for sid, player_data in players_to_iterate.items():
+        pinfo = player_data['pinfo']
+        game_player = player_data['game_player']
         player_name = pinfo.get('name', '未知玩家')
         character_name = pinfo.get('avatar', {}).get('character', '勇者')
         
         # 尝试从game_state中获取玩家的属性（如果游戏已开始）
         player_stats = None
-        if 'game_state' in room and sid in room['game_state'].get('players', {}):
-            game_player = room['game_state']['players'][sid]
+        if game_player:
             # 从游戏状态中获取计算后的属性
             player_stats = {
-                'attack': 0,  # 游戏状态中没有存储攻击力，需要从用户数据获取
+                'attack': game_player.get('attack', 0),  # 从游戏状态获取攻击力
                 'critRate': game_player.get('critRate', 0.0),
                 'critDamage': game_player.get('critDamage', 1.0),
                 'attributePower': game_player.get('attributePower', 0),
-                'hp': game_player.get('maxHp', 1000)
+                'hp': game_player.get('maxHp', 1000),
+                'damageBonus': game_player.get('damageBonus', 0.0),
+                'healingBonus': game_player.get('healingBonus', 0.0),
+                'reloadReduction': game_player.get('reloadReduction', 0.0),
+                'rapidFire': game_player.get('rapidFire', 0.0),
+                'extraAmmo': game_player.get('extraAmmo', 0.0)
             }
         
         # 尝试从所有用户中找到匹配的角色数据
@@ -2625,10 +2917,16 @@ def handle_request_team_stats(data):
             
             # 如果游戏状态中有更准确的属性，使用游戏状态的值（如暴击率、属性强度等）
             if player_stats:
-                final_stats['critRate'] = player_stats['critRate']
-                final_stats['critDamage'] = player_stats['critDamage']
-                final_stats['attributePower'] = player_stats['attributePower']
-                final_stats['hp'] = player_stats['hp']
+                final_stats['attack'] = player_stats.get('attack', final_stats.get('attack', 0))
+                final_stats['critRate'] = player_stats.get('critRate', final_stats.get('critRate', 0.0))
+                final_stats['critDamage'] = player_stats.get('critDamage', final_stats.get('critDamage', 1.0))
+                final_stats['attributePower'] = player_stats.get('attributePower', final_stats.get('attributePower', 0))
+                final_stats['hp'] = player_stats.get('hp', final_stats.get('hp', 1000))
+                final_stats['damageBonus'] = player_stats.get('damageBonus', final_stats.get('damageBonus', 0.0))
+                final_stats['healingBonus'] = player_stats.get('healingBonus', final_stats.get('healingBonus', 0.0))
+                final_stats['reloadReduction'] = player_stats.get('reloadReduction', final_stats.get('reloadReduction', 0.0))
+                final_stats['rapidFire'] = player_stats.get('rapidFire', final_stats.get('rapidFire', 0.0))
+                final_stats['extraAmmo'] = player_stats.get('extraAmmo', final_stats.get('extraAmmo', 0.0))
         else:
             # 如果找不到用户数据，使用默认值
             default_stats = {
@@ -2648,10 +2946,35 @@ def handle_request_team_stats(data):
                 default_stats.update(player_stats)
             final_stats = default_stats
         
+        # 应用实时技能加成效果
+        if 'game_state' in room and sid in room['game_state'].get('players', {}):
+            game_player = room['game_state']['players'][sid]
+            current_time = time.time()
+            
+            # 星耀犊E技能：属性强度+200，治疗加成+20%
+            if 'e_skills' in room['game_state'] and sid in room['game_state']['e_skills']:
+                e_skill = room['game_state']['e_skills'][sid]
+                elapsed = current_time - e_skill.get('start_time', 0)
+                if elapsed < e_skill.get('duration', 10.0):
+                    final_stats['attributePower'] = final_stats.get('attributePower', 0) + e_skill.get('attribute_power_bonus', 0)
+                    final_stats['healingBonus'] = final_stats.get('healingBonus', 0.0) + e_skill.get('healing_bonus', 0.0)
+            
+            # 幺幺俊羊羊护盾：伤害加成+50%
+            bubble_shield_end = game_player.get('bubble_shield_end', 0)
+            if current_time < bubble_shield_end:
+                bubble_damage_bonus = game_player.get('bubble_shield_damage_bonus', 0.0)
+                final_stats['damageBonus'] = final_stats.get('damageBonus', 0.0) + bubble_damage_bonus
+        
+        # 获取当前生命值（实时）
+        current_hp = 0
+        if 'game_state' in room and sid in room['game_state'].get('players', {}):
+            current_hp = room['game_state']['players'][sid].get('hp', 0)
+        
         team_stats[sid] = {
             'name': player_name,
             'character': character_name,
-            'stats': final_stats
+            'stats': final_stats,
+            'currentHp': current_hp  # 添加当前生命值
         }
     
     # 发送队伍数据给请求者
@@ -2951,11 +3274,16 @@ def perform_gacha(users, username, count=1):
     pity_4star = users[username].get('gacha_pity_4star', 0)
     pity_5star = users[username].get('gacha_pity_5star', 0)
     
+    log_gacha(username, f"========== 开始抽卡 ==========")
+    log_gacha(username, f"抽卡数量: {count}, 初始保底计数 - 四星: {pity_4star}/10, 五星: {pity_5star}/50")
+    
     # 十连抽时，记录是否已经有四星或五星
     has_4star_in_batch = False
     has_5star_in_batch = False
     
     for i in range(count):
+        log_gacha(username, f"--- 第 {i+1} 抽 --- 抽卡前保底计数 - 四星: {pity_4star}/10, 五星: {pity_5star}/50")
+        
         # 检查保底
         must_4star = (pity_4star >= 9)  # 第10抽必出四星
         must_5star = (pity_5star >= 49)  # 第50抽必出五星
@@ -2968,32 +3296,53 @@ def perform_gacha(users, username, count=1):
         if count == 10 and i == 9 and not has_5star_in_batch and pity_5star >= 49:
             must_5star = True
         
+        if must_4star or must_5star:
+            log_gacha(username, f"保底检查 - must_4star: {must_4star}, must_5star: {must_5star}")
+        
+        # 先不设置保底计数，等确定抽到对应星级武器后再设置
         if must_5star:
             # 必出五星
             star = 5
-            pity_5star = 0
-            pity_4star = 0
             has_5star_in_batch = True
+            # 保底时强制生成武器
+            force_weapon = True
+            # 临时保存保底状态，等确认抽到武器后再重置计数
+            should_reset_5star_pity = True
+            should_reset_4star_pity = True
+            log_gacha(username, f"触发五星保底！star=5, force_weapon=True")
         elif must_4star:
             # 必出四星
             star = 4
-            pity_4star = 0
-            pity_5star += 1
             has_4star_in_batch = True
+            # 保底时强制生成武器
+            force_weapon = True
+            # 临时保存保底状态，等确认抽到武器后再重置计数
+            should_reset_4star_pity = True
+            should_reset_5star_pity = False
+            log_gacha(username, f"触发四星保底！star=4, force_weapon=True")
         else:
             # 正常抽卡
+            # 概率：三星85%，四星12%，五星3%
             rand = random.random()
-            if rand < 0.10:  # 10% 五星
+            should_reset_5star_pity = False
+            should_reset_4star_pity = False
+            if rand < 0.03:  # 3% 五星
                 star = 5
-                pity_5star = 0
-                pity_4star = 0
+                # 不立即重置保底计数，等确认抽到武器后再重置
+                should_reset_5star_pity = True
+                should_reset_4star_pity = True
                 has_5star_in_batch = True
-            elif rand < 0.30:  # 20% 四星
+                force_weapon = False
+                log_gacha(username, f"随机抽到五星！rand={rand:.4f}")
+            elif rand < 0.15:  # 12% 四星 (0.03 + 0.12 = 0.15)
                 star = 4
-                pity_4star = 0
-                pity_5star += 1
+                # 不立即重置保底计数，等确认抽到武器后再重置
+                should_reset_4star_pity = True
+                should_reset_5star_pity = False
                 has_4star_in_batch = True
-            else:  # 70% 三星
+                force_weapon = False
+                log_gacha(username, f"随机抽到四星！rand={rand:.4f}")
+            else:  # 85% 三星 (剩余概率)
                 star = 3
                 pity_4star += 1
                 pity_5star += 1
@@ -3001,29 +3350,41 @@ def perform_gacha(users, username, count=1):
         # 每次循环都获取最新的武器列表（因为可能在上一次循环中添加了新武器）
         user_weapons = users[username].get('weapons', [])
         
-        # 生成奖励
-        reward_type = random.choice(['emoji', 'material', 'equipment', 'weapon'])
+        # 生成奖励：四星和五星只能抽到武器，三星可以抽到各种道具
+        if star == 5 or star == 4:
+            # 四星和五星只能抽到武器
+            reward_type = 'weapon'
+        elif star == 3:
+            # 三星可以抽到各种道具
+            reward_type = random.choice(['emoji', 'material', 'equipment', 'weapon'])
+        else:
+            # 默认生成武器
+            reward_type = 'weapon'
         
         if reward_type == 'emoji':
-            # 随机表情包（固定3星）
+            # 随机表情包（固定3星，只在三星时出现）
             emoji_num = random.randint(1, 10)
             results.append({
                 'type': 'emoji',
                 'star': 3,  # 表情包固定3星
                 'name': f'表情包{emoji_num}',
-                'image': f'/static/表情包/{emoji_num}.png'
+                'image': f'/static/表情包/{emoji_num}.png',
+                'index': i + 1  # 抽卡序号（从1开始）
             })
+            log_gacha(username, f"第{i+1}抽: 抽到表情包{emoji_num}，当前保底计数 - 四星: {pity_4star}, 五星: {pity_5star}")
         elif reward_type == 'material':
-            # 叠志精心料x1（固定3星）
+            # 叠志精心料x1（固定3星，只在三星时出现）
             users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 1
             results.append({
                 'type': 'material',
                 'star': 3,  # 叠志精心料固定3星
                 'name': '叠志精心料',
-                'count': 1
+                'count': 1,
+                'index': i + 1  # 抽卡序号（从1开始）
             })
+            log_gacha(username, f"第{i+1}抽: 抽到叠志精心料x1，当前保底计数 - 四星: {pity_4star}, 五星: {pity_5star}")
         elif reward_type == 'equipment':
-            # 随机装备（固定3星）
+            # 随机装备（固定3星，只在三星时出现）
             equipment = generate_random_equipment()
             if 'equipment' not in users[username]:
                 users[username]['equipment'] = []
@@ -3031,8 +3392,10 @@ def perform_gacha(users, username, count=1):
             results.append({
                 'type': 'equipment',
                 'star': 3,  # 装备固定3星
-                'equipment': equipment
+                'equipment': equipment,
+                'index': i + 1  # 抽卡序号（从1开始）
             })
+            log_gacha(username, f"第{i+1}抽: 抽到装备，当前保底计数 - 四星: {pity_4star}, 五星: {pity_5star}")
         else:  # weapon
             # 随机武器
             weapon_name = random.choice(WEAPONS[star])
@@ -3041,35 +3404,45 @@ def perform_gacha(users, username, count=1):
             weapon_ids = [w.get('name') for w in user_weapons]
             is_duplicate = weapon_name in weapon_ids
             
+            # 确认抽到了对应星级的武器，现在可以重置保底计数
+            if should_reset_5star_pity:
+                log_gacha(username, f"第{i+1}抽: 抽到五星武器 {weapon_name}，重置保底计数 - 四星: 0, 五星: 0，是否重复: {is_duplicate}")
+                pity_5star = 0
+                pity_4star = 0
+            elif should_reset_4star_pity:
+                log_gacha(username, f"第{i+1}抽: 抽到四星武器 {weapon_name}，重置四星保底计数: 0, 五星保底计数: {pity_5star + 1}，是否重复: {is_duplicate}")
+                pity_4star = 0
+                pity_5star += 1
+            else:
+                log_gacha(username, f"第{i+1}抽: 抽到{star}星武器 {weapon_name}，当前保底计数 - 四星: {pity_4star}, 五星: {pity_5star}，是否重复: {is_duplicate}")
+            
             if is_duplicate:
-                # 重复武器转换
+                # 重复武器转换，但显示时仍显示武器
+                compensation = None
                 if star == 3:
                     users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 5
-                    results.append({
-                        'type': 'material',
-                        'star': star,
-                        'name': '叠志精心料',
-                        'count': 5,
-                        'original_weapon': weapon_name
-                    })
+                    compensation = {'type': 'material', 'name': '叠志精心料', 'count': 5}
                 elif star == 4:
                     users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 1
-                    results.append({
-                        'type': 'ticket',
-                        'star': star,
-                        'name': '神兵许愿单',
-                        'count': 1,
-                        'original_weapon': weapon_name
-                    })
+                    compensation = {'type': 'ticket', 'name': '神兵许愿单', 'count': 1}
                 else:  # star == 5
                     users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 5
-                    results.append({
-                        'type': 'ticket',
-                        'star': star,
-                        'name': '神兵许愿单',
-                        'count': 5,
-                        'original_weapon': weapon_name
-                    })
+                    compensation = {'type': 'ticket', 'name': '神兵许愿单', 'count': 5}
+                
+                # 创建武器对象用于显示（但不添加到武器列表）
+                weapon = {
+                    'id': f"weapon_{int(time.time() * 1000)}_{random.randint(1000, 9999)}",
+                    'name': weapon_name,
+                    'star': star
+                }
+                results.append({
+                    'type': 'weapon',
+                    'star': star,
+                    'weapon': weapon,
+                    'is_duplicate': True,
+                    'compensation': compensation,  # 补偿信息
+                    'index': i + 1  # 抽卡序号（从1开始）
+                })
             else:
                 # 新武器
                 weapon = {
@@ -3081,13 +3454,16 @@ def perform_gacha(users, username, count=1):
                 results.append({
                     'type': 'weapon',
                     'star': star,
-                    'weapon': weapon
+                    'weapon': weapon,
+                    'index': i + 1  # 抽卡序号（从1开始）
                 })
     
     # 更新保底计数
     users[username]['gacha_pity_4star'] = pity_4star
     users[username]['gacha_pity_5star'] = pity_5star
     users[username]['weapons'] = user_weapons
+    
+    log_gacha(username, f"========== 抽卡结束 ========== 最终保底计数 - 四星: {pity_4star}/10, 五星: {pity_5star}/50")
     
     return results
 

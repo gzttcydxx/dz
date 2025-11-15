@@ -5,6 +5,9 @@ const socket = io();
 document.addEventListener('DOMContentLoaded', function() {
     console.log('页面加载完成');
     
+    // 初始化下拉框选项
+    initializeSelectOptions();
+    
     // 自动隐藏Flash消息
     setTimeout(() => {
         const flashMessages = document.querySelectorAll('.flash-message');
@@ -653,6 +656,170 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // 获取属性颜色（与伤害字体颜色一致）
+    function getAttributeColor(attribute) {
+        const colors = window.attributeColors || {
+            '物理系': '#ffffff',
+            '自然系': '#00ffcc',
+            '超能系': '#ff00ff',
+            '无属性': '#87ceeb'
+        };
+        return colors[attribute] || '#000000';
+    }
+    
+    // 生成属性显示的HTML（带颜色和黑色描边）
+    function getAttributeDisplayHTML(attribute) {
+        const color = getAttributeColor(attribute);
+        // 使用text-shadow实现黑色描边效果
+        return `<span style="color: ${color}; font-weight: bold; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 3px #000;">${attribute}</span>`;
+    }
+    
+    // 生成带标签的选项文本（用于下拉框）
+    function getOptionTextWithTag(name, attribute) {
+        // 由于HTML option标签不支持复杂样式，我们使用Unicode字符来模拟标签效果
+        // 格式：名字 [属性]
+        return `${name} [${attribute}]`;
+    }
+    
+    // 获取属性标签的CSS类名
+    function getAttributeTagClass(attribute) {
+        const classMap = {
+            '物理系': 'physical',
+            '自然系': 'nature',
+            '超能系': 'psychic',
+            '无属性': 'none'
+        };
+        return classMap[attribute] || 'none';
+    }
+    
+    // 创建属性标签HTML（使用简写）
+    function createAttributeTag(attribute) {
+        const tagClass = getAttributeTagClass(attribute);
+        // 将属性名称转换为简写
+        const shortNames = {
+            '物理系': '物理',
+            '自然系': '自然',
+            '超能系': '超能',
+            '无属性': '无'
+        };
+        const shortName = shortNames[attribute] || attribute;
+        return `<span class="attribute-tag-inline ${tagClass}">${shortName}</span>`;
+    }
+    
+    // 将select转换为自定义下拉框
+    function convertSelectToCustom(selectId, attributeMap) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        
+        // 创建包装器
+        const wrapper = document.createElement('div');
+        wrapper.className = 'custom-select-wrapper';
+        
+        // 创建自定义select
+        const customSelect = document.createElement('div');
+        customSelect.className = 'custom-select';
+        
+        const display = document.createElement('div');
+        display.className = 'custom-select-display';
+        
+        const arrow = document.createElement('span');
+        arrow.className = 'custom-select-arrow';
+        arrow.textContent = '▼';
+        
+        const dropdown = document.createElement('div');
+        dropdown.className = 'custom-select-dropdown';
+        
+        // 获取当前选中的选项
+        const selectedOption = select.options[select.selectedIndex];
+        const selectedAttribute = selectedOption.getAttribute('data-attribute') || 
+                                 (attributeMap && attributeMap[selectedOption.value]) || 
+                                 '';
+        
+        // 设置显示内容
+        display.innerHTML = `${selectedOption.value} ${selectedAttribute ? createAttributeTag(selectedAttribute) : ''}`;
+        
+        // 创建选项
+        Array.from(select.options).forEach((option, index) => {
+            const optionDiv = document.createElement('div');
+            optionDiv.className = 'custom-select-option';
+            if (index === select.selectedIndex) {
+                optionDiv.classList.add('selected');
+            }
+            
+            const attribute = option.getAttribute('data-attribute') || 
+                            (attributeMap && attributeMap[option.value]) || 
+                            '';
+            
+            optionDiv.innerHTML = `${option.value} ${attribute ? createAttributeTag(attribute) : ''}`;
+            
+            optionDiv.addEventListener('click', () => {
+                // 更新select的值
+                select.selectedIndex = index;
+                select.dispatchEvent(new Event('change'));
+                
+                // 更新显示
+                display.innerHTML = `${option.value} ${attribute ? createAttributeTag(attribute) : ''}`;
+                
+                // 更新选中状态
+                dropdown.querySelectorAll('.custom-select-option').forEach(opt => {
+                    opt.classList.remove('selected');
+                });
+                optionDiv.classList.add('selected');
+                
+                // 关闭下拉框
+                customSelect.classList.remove('open');
+            });
+            
+            dropdown.appendChild(optionDiv);
+        });
+        
+        // 组装
+        customSelect.appendChild(display);
+        customSelect.appendChild(arrow);
+        customSelect.appendChild(dropdown);
+        wrapper.appendChild(customSelect);
+        
+        // 隐藏原始select
+        select.style.display = 'none';
+        
+        // 插入包装器
+        select.parentNode.insertBefore(wrapper, select);
+        wrapper.appendChild(select);
+        
+        // 点击事件
+        customSelect.addEventListener('click', (e) => {
+            e.stopPropagation();
+            customSelect.classList.toggle('open');
+        });
+        
+        // 点击外部关闭
+        document.addEventListener('click', (e) => {
+            if (!wrapper.contains(e.target)) {
+                customSelect.classList.remove('open');
+            }
+        });
+        
+        // 监听原始select的变化（如果通过代码改变）
+        select.addEventListener('change', () => {
+            const selectedOption = select.options[select.selectedIndex];
+            const selectedAttribute = selectedOption.getAttribute('data-attribute') || 
+                                     (attributeMap && attributeMap[selectedOption.value]) || 
+                                     '';
+            display.innerHTML = `${selectedOption.value} ${selectedAttribute ? createAttributeTag(selectedAttribute) : ''}`;
+            
+            // 更新选中状态
+            dropdown.querySelectorAll('.custom-select-option').forEach((opt, idx) => {
+                opt.classList.toggle('selected', idx === select.selectedIndex);
+            });
+        });
+    }
+    
+    // 初始化下拉框选项（添加属性标签）
+    function initializeSelectOptions() {
+        // 将怪物选择下拉框转换为自定义下拉框
+        convertSelectToCustom('monsterSelect', window.enemyAttributes);
+    }
+    
     // 选择角色并显示信息
     function selectCharacter(charName) {
         // 更新选中状态
@@ -762,6 +929,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="character-stats" style="margin: 20px 0;">
                 <h4 style="color: #000; margin-bottom: 15px; font-weight: bold; font-family: 'Microsoft YaHei', 'SimHei', sans-serif;">角色面板</h4>
                 <div style="color: #000; line-height: 2; font-weight: bold; font-family: 'Microsoft YaHei', 'SimHei', sans-serif;">
+                    <div>属性: ${getAttributeDisplayHTML((window.characterAttributes && window.characterAttributes[charName]) || '无属性')}</div>
                     <div>生命值: <span style="color: #d4af37;">${Math.ceil(finalStats.hp || 1000)}</span></div>
                     <div>攻击力: <span style="color: #d4af37;">${Math.ceil(attackValue)}</span></div>
                     <div>暴击率: <span style="color: #d4af37;">${((finalStats.critRate || 0) * 100).toFixed(1)}%</span></div>

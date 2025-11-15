@@ -88,6 +88,12 @@ socket.on('connect', () => {
     console.log('发送get_room_info数据:', getInfoData);
     socket.emit('get_room_info', getInfoData);
     console.log('✓ get_room_info事件已发送');
+    
+    // 初始化下拉框选项
+    setTimeout(() => {
+        initializeLobbySelectOptions();
+    }, 100);
+    
     console.log('========================\n');
 });
 
@@ -344,6 +350,14 @@ function updateRoomDisplay(data) {
     } else {
         roomSettingsBtn.style.display = 'none';
         console.log('❌ 非房主，隐藏房间设置按钮');
+    }
+    
+    // 如果角色选择弹窗是打开的，更新属性克制关系提示
+    if (changeAvatarModal && changeAvatarModal.classList.contains('show')) {
+        const currentCharacter = characterSelect ? characterSelect.value : null;
+        if (currentCharacter) {
+            updateAttributeAdvantageHint(currentCharacter);
+        }
     }
 }
 
@@ -619,6 +633,164 @@ function updateCharacterSelect(players, currentPlayerId) {
     });
 }
 
+// 获取属性颜色（与伤害字体颜色一致）
+function getAttributeColor(attribute) {
+    const colors = window.attributeColors || {
+        '物理系': '#ffffff',
+        '自然系': '#00ffcc',
+        '超能系': '#ff00ff',
+        '无属性': '#87ceeb'
+    };
+    return colors[attribute] || '#000000';
+}
+
+// 获取属性标签的CSS类名
+function getAttributeTagClass(attribute) {
+    const classMap = {
+        '物理系': 'physical',
+        '自然系': 'nature',
+        '超能系': 'psychic',
+        '无属性': 'none'
+    };
+    return classMap[attribute] || 'none';
+}
+
+// 创建属性标签HTML（使用简写）
+function createAttributeTag(attribute) {
+    const tagClass = getAttributeTagClass(attribute);
+    // 将属性名称转换为简写
+    const shortNames = {
+        '物理系': '物理',
+        '自然系': '自然',
+        '超能系': '超能',
+        '无属性': '无'
+    };
+    const shortName = shortNames[attribute] || attribute;
+    return `<span class="attribute-tag-inline ${tagClass}">${shortName}</span>`;
+}
+
+// 将select转换为自定义下拉框
+function convertSelectToCustom(selectId, attributeMap) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    
+    // 创建包装器
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select-wrapper';
+    
+    // 创建自定义select
+    const customSelect = document.createElement('div');
+    customSelect.className = 'custom-select';
+    
+    const display = document.createElement('div');
+    display.className = 'custom-select-display';
+    
+    const arrow = document.createElement('span');
+    arrow.className = 'custom-select-arrow';
+    arrow.textContent = '▼';
+    
+    const dropdown = document.createElement('div');
+    dropdown.className = 'custom-select-dropdown';
+    
+    // 获取当前选中的选项
+    const selectedOption = select.options[select.selectedIndex];
+    const selectedAttribute = selectedOption.getAttribute('data-attribute') || 
+                             (attributeMap && attributeMap[selectedOption.value]) || 
+                             '';
+    
+    // 设置显示内容
+    display.innerHTML = `${selectedOption.value} ${selectedAttribute ? createAttributeTag(selectedAttribute) : ''}`;
+    
+    // 创建选项
+    Array.from(select.options).forEach((option, index) => {
+        const optionDiv = document.createElement('div');
+        optionDiv.className = 'custom-select-option';
+        if (index === select.selectedIndex) {
+            optionDiv.classList.add('selected');
+        }
+        
+        const attribute = option.getAttribute('data-attribute') || 
+                        (attributeMap && attributeMap[option.value]) || 
+                        '';
+        
+        optionDiv.innerHTML = `${option.value} ${attribute ? createAttributeTag(attribute) : ''}`;
+        
+        optionDiv.addEventListener('click', () => {
+            // 更新select的值
+            select.selectedIndex = index;
+            select.dispatchEvent(new Event('change'));
+            
+            // 更新显示
+            display.innerHTML = `${option.value} ${attribute ? createAttributeTag(attribute) : ''}`;
+            
+            // 更新选中状态
+            dropdown.querySelectorAll('.custom-select-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+            optionDiv.classList.add('selected');
+            
+            // 关闭下拉框
+            customSelect.classList.remove('open');
+        });
+        
+        dropdown.appendChild(optionDiv);
+    });
+    
+    // 组装
+    customSelect.appendChild(display);
+    customSelect.appendChild(arrow);
+    customSelect.appendChild(dropdown);
+    wrapper.appendChild(customSelect);
+    
+    // 隐藏原始select
+    select.style.display = 'none';
+    
+    // 插入包装器
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(select);
+    
+    // 点击事件
+    customSelect.addEventListener('click', (e) => {
+        e.stopPropagation();
+        customSelect.classList.toggle('open');
+    });
+    
+    // 点击外部关闭
+    document.addEventListener('click', (e) => {
+        if (!wrapper.contains(e.target)) {
+            customSelect.classList.remove('open');
+        }
+    });
+    
+    // 监听原始select的变化（如果通过代码改变）
+    select.addEventListener('change', () => {
+        const selectedOption = select.options[select.selectedIndex];
+        const selectedAttribute = selectedOption.getAttribute('data-attribute') || 
+                                 (attributeMap && attributeMap[selectedOption.value]) || 
+                                 '';
+        display.innerHTML = `${selectedOption.value} ${selectedAttribute ? createAttributeTag(selectedAttribute) : ''}`;
+        
+        // 更新选中状态
+        dropdown.querySelectorAll('.custom-select-option').forEach((opt, idx) => {
+            opt.classList.toggle('selected', idx === select.selectedIndex);
+        });
+    });
+}
+
+// 初始化下拉框选项（转换为自定义下拉框）
+function initializeLobbySelectOptions() {
+    // 将角色选择下拉框转换为自定义下拉框
+    if (characterSelect) {
+        convertSelectToCustom('characterSelect', window.characterAttributes);
+    }
+    
+    // 将怪物选择下拉框转换为自定义下拉框
+    const monsterSelects = ['settingsMonster', 'modalMonsterSelect'];
+    monsterSelects.forEach(selectId => {
+        convertSelectToCustom(selectId, window.enemyAttributes);
+    });
+}
+
 // 更新头像预览
 function updateAvatarPreview() {
     const character = characterSelect.value;
@@ -629,6 +801,9 @@ function updateAvatarPreview() {
     
     avatarPreview.src = imagePath;
     avatarName.textContent = `${character} - 配色${color}`;
+    
+    // 更新属性克制关系提示
+    updateAttributeAdvantageHint(character);
     
     // 重置错误处理
     avatarPreview.onerror = function() {
@@ -642,6 +817,99 @@ function updateAvatarPreview() {
         console.log('图片加载成功:', imagePath);
         this.style.background = '#f8f9fa';
     };
+}
+
+// 更新属性克制关系提示
+function updateAttributeAdvantageHint(character) {
+    const hintElement = document.getElementById('attributeAdvantageHint');
+    const textElement = document.getElementById('attributeAdvantageText');
+    
+    if (!hintElement || !textElement) {
+        console.warn('属性克制关系提示元素不存在');
+        return;
+    }
+    
+    // 检查是否有房间信息和配置
+    if (!currentRoom || !window.characterAttributes || !window.enemyAttributes || !window.attributeAdvantage) {
+        hintElement.style.display = 'none';
+        return;
+    }
+    
+    const currentMonster = currentRoom.monster;
+    if (!currentMonster) {
+        hintElement.style.display = 'none';
+        return;
+    }
+    
+    const characterAttribute = window.characterAttributes[character] || '无属性';
+    const enemyAttribute = window.enemyAttributes[currentMonster] || '无属性';
+    
+    // 计算克制关系
+    let advantageText = '';
+    let hintColor = '#333';
+    
+    // 王子栗特殊处理：显示被动技能说明
+    if (character === '王子栗') {
+        if (enemyAttribute === '无属性') {
+            // 敌人是无属性，不显示克制关系
+            hintElement.style.display = 'none';
+            return;
+        }
+        
+        // 检查敌人是否有属性（物理/自然/超能）
+        if (enemyAttribute === '物理系' || enemyAttribute === '自然系' || enemyAttribute === '超能系') {
+            // 根据敌人属性，显示会被克制的属性
+            let counterAttribute = '';
+            if (enemyAttribute === '物理系') {
+                counterAttribute = '超能系';
+            } else if (enemyAttribute === '自然系') {
+                counterAttribute = '物理系';
+            } else if (enemyAttribute === '超能系') {
+                counterAttribute = '自然系';
+            }
+            
+            advantageText = `✨ 被动效果：对${enemyAttribute}敌人造成伤害时，伤害转变为${counterAttribute}（克制${enemyAttribute}）`;
+            hintColor = '#667eea'; // 紫色，表示特殊效果
+            hintElement.style.background = 'rgba(102, 126, 234, 0.15)';
+            hintElement.style.border = '2px solid rgba(102, 126, 234, 0.5)';
+            
+            textElement.textContent = advantageText;
+            textElement.style.color = hintColor;
+            hintElement.style.display = 'block';
+            return;
+        }
+    }
+    
+    // 如果角色或敌人是无属性，不显示克制关系
+    if (characterAttribute === '无属性' || enemyAttribute === '无属性') {
+        hintElement.style.display = 'none';
+        return;
+    }
+    
+    // 检查角色是否克制敌人
+    if (window.attributeAdvantage[characterAttribute] === enemyAttribute) {
+        // 角色克制敌人
+        advantageText = `✓ 优势：${characterAttribute}克制${enemyAttribute}，对敌人造成额外伤害`;
+        hintColor = '#28a745'; // 绿色，表示优势
+        hintElement.style.background = 'rgba(40, 167, 69, 0.15)';
+        hintElement.style.border = '2px solid rgba(40, 167, 69, 0.5)';
+    } else if (window.attributeAdvantage[enemyAttribute] === characterAttribute) {
+        // 敌人克制角色
+        advantageText = `✗ 劣势：${enemyAttribute}克制${characterAttribute}，敌人对你造成额外伤害`;
+        hintColor = '#dc3545'; // 红色，表示劣势
+        hintElement.style.background = 'rgba(220, 53, 69, 0.15)';
+        hintElement.style.border = '2px solid rgba(220, 53, 69, 0.5)';
+    } else {
+        // 无克制关系
+        advantageText = `○ 平衡：${characterAttribute}与${enemyAttribute}无克制关系`;
+        hintColor = '#6c757d'; // 灰色，表示平衡
+        hintElement.style.background = 'rgba(108, 117, 125, 0.15)';
+        hintElement.style.border = '2px solid rgba(108, 117, 125, 0.5)';
+    }
+    
+    textElement.textContent = advantageText;
+    textElement.style.color = hintColor;
+    hintElement.style.display = 'block';
 }
 
 // 点击模态框外部关闭

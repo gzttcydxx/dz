@@ -59,6 +59,157 @@
             border: 2px solid #ddd;
         }
         
+        /* 属性标签样式 */
+        .attribute-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            margin-left: 5px;
+            vertical-align: middle;
+        }
+        
+        .attribute-tag.physical {
+            background-color: #ffffff;
+            color: #000;
+            border: 1px solid #ccc;
+        }
+        
+        .attribute-tag.nature {
+            background-color: #00ff00;
+        }
+        
+        .attribute-tag.psychic {
+            background-color: #ff00ff;
+        }
+        
+        .attribute-tag.none {
+            background-color: #0000ff;
+        }
+        
+        /* 自定义下拉框选项样式 - 使用CSS来美化选项文本 */
+        select option {
+            padding: 5px;
+        }
+        
+        /* 为select添加样式以支持更好的显示 */
+        select {
+            font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
+        }
+        
+        /* 自定义下拉框样式 */
+        .custom-select-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .custom-select {
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            background-color: #fff;
+            cursor: pointer;
+            font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
+            color: #333;
+        }
+        
+        .custom-select:hover {
+            border-color: #999;
+        }
+        
+        .custom-select.open {
+            border-color: #4a9eff;
+        }
+        
+        .custom-select-display {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .custom-select-arrow {
+            margin-left: auto;
+            transition: transform 0.3s;
+        }
+        
+        .custom-select.open .custom-select-arrow {
+            transform: rotate(180deg);
+        }
+        
+        .custom-select-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 5px;
+            background-color: #fff;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .custom-select.open .custom-select-dropdown {
+            display: block;
+        }
+        
+        .custom-select-option {
+            padding: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: background-color 0.2s;
+        }
+        
+        .custom-select-option:hover {
+            background-color: #f0f0f0;
+        }
+        
+        .custom-select-option.selected {
+            background-color: #e3f2fd;
+        }
+        
+        .attribute-tag-inline {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+        }
+        
+        .attribute-tag-inline.physical {
+            background-color: #ffffff;
+            color: #000;
+            border: 1px solid #ccc;
+            text-shadow: none;
+        }
+        
+        .attribute-tag-inline.nature {
+            background-color: #00ffcc;
+        }
+        
+        .attribute-tag-inline.psychic {
+            background-color: #ff00ff;
+        }
+        
+        .attribute-tag-inline.none {
+            background-color: #87ceeb;
+        }
+        
         .form-group input::placeholder {
             color: rgba(255, 255, 255, 0.5);
         }
@@ -232,11 +383,11 @@
                         <div class="form-group">
                             <label for="monsterSelect">选择怪物：</label>
                             <select id="monsterSelect" name="monsterSelect">
-                                <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
-                                <option value="诗宝蕉形脸">诗宝蕉形脸</option>
-                                <option value="笛者蕉形脸">笛者蕉形脸</option>
-                                <option value="热辣蕉形脸">热辣蕉形脸</option>
-                                <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                                <option value="杂鱼蕉形脸" data-attribute="无属性">杂鱼蕉形脸</option>
+                                <option value="诗宝蕉形脸" data-attribute="自然系">诗宝蕉形脸</option>
+                                <option value="笛者蕉形脸" data-attribute="超能系">笛者蕉形脸</option>
+                                <option value="热辣蕉形脸" data-attribute="物理系">热辣蕉形脸</option>
+                                <option value="沙壁蕉形脸" data-attribute="自然系">沙壁蕉形脸</option>
                             </select>
                         </div>
                         <div class="button-group">
@@ -383,6 +534,16 @@
         window.characterSkills = {{ character_skills | tojson }};
         window.userEquipment = {{ user_equipment | tojson if user_equipment else '[]' }};
         window.userWeapons = {{ user_weapons | tojson if user_weapons else '[]' }};
+        // 角色和敌人属性配置
+        window.characterAttributes = {{ character_attributes | tojson }};
+        window.enemyAttributes = {{ enemy_attributes | tojson }};
+        // 属性颜色配置（与伤害字体颜色一致）
+        window.attributeColors = {
+            '物理系': '#ffffff',      // 白色
+            '自然系': '#00ffcc',      // 青绿色
+            '超能系': '#ff00ff',      // 紫粉色
+            '无属性': '#87ceeb'       // 天蓝色
+        };
         // 武器配置（用于显示普通射击伤害和计算）
         window.weapons = {
             '勇者': { damage: 500, fireRate: 0.7, maxAmmo: 6, reloadTime: 1.2 },

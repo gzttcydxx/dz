@@ -117,6 +117,10 @@ let isShooting = false;
 let isReloading = false;
 let isRightClickHeld = false;  // 右键是否按住
 
+// 技能状态同步
+let lastSkillsSyncTime = 0;  // 上次同步技能状态的时间
+const SKILLS_SYNC_INTERVAL = 0.5;  // 每0.5秒同步一次技能状态
+
 // 星耀犊锁定系统
 let lockedPlayerId = null;  // 当前锁定的玩家ID
 let lockedPlayer = null;  // 当前锁定的玩家对象
@@ -376,6 +380,107 @@ function init() {
         y: localPlayer.y,
         hp: localPlayer.hp
     });
+    
+    // 拦截键盘刷新快捷键（F5, Ctrl+R, Ctrl+Shift+R）
+    // 注意：不使用beforeunload事件，因为它会阻塞浏览器导致游戏暂停
+    // 只拦截键盘快捷键，使用非阻塞提示
+    document.addEventListener('keydown', function(e) {
+        // 如果游戏已结束，刷新时直接返回大厅
+        if (gameState.gameResult || (!gameState.gameRunning && (gameState.isDead || gameState.countdown === 0))) {
+            // 游戏已结束，刷新时直接跳转到大厅
+            if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+                e.preventDefault();
+                e.stopPropagation();
+                returnToLobby();
+                return false;
+            }
+            return;
+        }
+        
+        // 检查游戏是否正在进行中
+        if (gameState.gameRunning && gameState.countdown === 0 && !gameState.isDead && !gameState.gameResult) {
+            // F5 刷新
+            if (e.key === 'F5') {
+                e.preventDefault();
+                e.stopPropagation();
+                // 使用非阻塞提示
+                showNonBlockingWarning('游戏正在进行中，请勿刷新页面！刷新会导致技能冷却重置。');
+                return false;
+            }
+            // Ctrl+R 或 Ctrl+Shift+R 刷新
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R')) {
+                e.preventDefault();
+                e.stopPropagation();
+                // 使用非阻塞提示
+                showNonBlockingWarning('游戏正在进行中，请勿刷新页面！刷新会导致技能冷却重置。');
+                return false;
+            }
+        }
+    }, true);  // 使用捕获阶段，确保优先拦截
+    
+    // 非阻塞警告提示函数（使用requestAnimationFrame异步显示，不阻塞游戏循环）
+    function showNonBlockingWarning(message) {
+        // 使用requestAnimationFrame确保不阻塞游戏循环
+        requestAnimationFrame(function() {
+            // 创建提示元素
+            const warningDiv = document.createElement('div');
+            warningDiv.id = 'refresh-warning';
+            warningDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(255, 0, 0, 0.95);
+                color: white;
+                padding: 15px 30px;
+                border-radius: 5px;
+                z-index: 10000;
+                font-size: 16px;
+                font-weight: bold;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+                pointer-events: none;
+                animation: fadeInOut 3s ease-in-out;
+            `;
+            warningDiv.textContent = message;
+            
+            // 添加淡入淡出动画
+            if (!document.getElementById('refresh-warning-style')) {
+                const style = document.createElement('style');
+                style.id = 'refresh-warning-style';
+                style.textContent = `
+                    @keyframes fadeInOut {
+                        0% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+                        10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+                        90% { opacity: 1; transform: translateX(-50%) translateY(0); }
+                        100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            // 移除旧的提示（如果存在）
+            const oldWarning = document.getElementById('refresh-warning');
+            if (oldWarning) {
+                oldWarning.remove();
+            }
+            
+            document.body.appendChild(warningDiv);
+            
+            // 3秒后自动移除
+            setTimeout(function() {
+                if (warningDiv.parentNode) {
+                    warningDiv.style.animation = 'fadeInOut 0.3s ease-out';
+                    setTimeout(function() {
+                        if (warningDiv.parentNode) {
+                            warningDiv.parentNode.removeChild(warningDiv);
+                        }
+                    }, 300);
+                }
+            }, 3000);
+        });
+    }
+    
+    console.log('✓ 页面刷新拦截已启用（仅拦截键盘快捷键）');
 }
 
 // Socket事件监听
@@ -399,6 +504,14 @@ socket.on('game_state', (data) => {
         const myPlayerId = data.myPlayerId || socket.id;
         if (gameState.players[myPlayerId]) {
             const serverPlayer = gameState.players[myPlayerId];
+            
+            // 同步位置（使用服务器返回的位置，而不是初始位置）
+            if (serverPlayer.x !== undefined && serverPlayer.y !== undefined) {
+                localPlayer.x = serverPlayer.x;
+                localPlayer.y = serverPlayer.y;
+                console.log('✓ 同步位置:', { x: localPlayer.x, y: localPlayer.y });
+            }
+            
             if (serverPlayer.maxHp !== undefined) {
                 localPlayer.maxHp = serverPlayer.maxHp;
                 if (serverPlayer.hp !== undefined) {
@@ -412,8 +525,441 @@ socket.on('game_state', (data) => {
                     localPlayer.hp = localPlayer.maxHp;
                 }
                 console.log('✓ 同步生命值:', { maxHp: localPlayer.maxHp, hp: localPlayer.hp });
+                
+                // 检查是否阵亡
+                if (localPlayer.hp <= 0) {
+                    gameState.isDead = true;
+                    localPlayer.hp = 0;
+                    console.log('⚠️ 玩家已阵亡，禁用所有操作');
+                    // 显示死亡屏幕
+                    if (typeof showDeathScreen === 'function') {
+                        showDeathScreen();
+                    }
+                } else {
+                    // 如果之前阵亡但现在HP>0，说明被复活了
+                    if (wasDead && localPlayer.hp > 0) {
+                        gameState.isDead = false;
+                        console.log('✓ 玩家已复活');
+                        // 隐藏死亡屏幕
+                        const deathOverlay = document.getElementById('deathOverlay');
+                        if (deathOverlay) {
+                            deathOverlay.style.display = 'none';
+                        }
+                    }
+                }
+                
                 // 立即更新UI显示
                 updateHealthBar();
+            }
+            
+            // 恢复技能状态（如果服务器有保存）
+            if (data.playerSkills && data.playerSkills[myPlayerId]) {
+                const serverSkills = data.playerSkills[myPlayerId];
+                console.log('✓ 恢复技能状态:', serverSkills);
+                
+                const currentTime = Date.now() / 1000;
+                
+                // 恢复技能状态
+                if (serverSkills.Q) {
+                    if (localPlayer.skills.Q) {
+                        // 恢复Q技能状态（充能值、冷却时间等）
+                        if (serverSkills.Q.charge !== undefined) {
+                            localPlayer.skills.Q.charge = serverSkills.Q.charge;
+                        }
+                        if (serverSkills.Q.maxCharge !== undefined) {
+                            localPlayer.skills.Q.maxCharge = serverSkills.Q.maxCharge;
+                        }
+                        if (serverSkills.Q.lastChargeTime !== undefined) {
+                            localPlayer.skills.Q.lastChargeTime = serverSkills.Q.lastChargeTime;
+                        }
+                        
+                        // 幺幺俊羊羊Q技能特殊处理：如果在显示虚影阶段刷新，取消虚影状态
+                        if (PLAYER_AVATAR.character === '幺幺俊羊羊' && serverSkills.Q.showingShadow) {
+                            localPlayer.skills.Q.active = false;
+                            localPlayer.skills.Q.showingShadow = false;
+                            localPlayer.skills.Q.cooldown = 0;
+                            localPlayer.skills.Q.cooldownStart = 0;
+                            console.log('🍎 幺幺俊羊羊Q技能：刷新时取消虚影状态（不进入冷却）');
+                        } else {
+                            // 处理激活状态：如果技能处于激活状态，检查是否应该结束
+                            if (serverSkills.Q.active && serverSkills.Q.activeTime !== undefined) {
+                                const elapsed = currentTime - serverSkills.Q.activeTime;
+                                const activeDuration = serverSkills.Q.activeDuration || 8;
+                                
+                                // 王子栗Q技能特殊处理：刷新时中断Q技能，返还25%充能，解除敌人禁锢
+                                if (PLAYER_AVATAR.character === '王子栗') {
+                                    // 中断Q技能
+                                    localPlayer.skills.Q.active = false;
+                                    // 使用服务器端的充能值（25%），而不是客户端计算
+                                    if (serverSkills.Q.charge !== undefined) {
+                                        localPlayer.skills.Q.charge = serverSkills.Q.charge;
+                                        console.log(`✓ 王子栗Q技能刷新中断，使用服务器端充能: ${localPlayer.skills.Q.charge}%`);
+                                    } else {
+                                        // 如果服务器端没有，则计算25%充能
+                                        const refundCharge = Math.floor(localPlayer.skills.Q.maxCharge * 0.25);
+                                        localPlayer.skills.Q.charge = refundCharge;
+                                        console.log(`✓ 王子栗Q技能刷新中断，返还${refundCharge}%充能，当前充能: ${localPlayer.skills.Q.charge}%`);
+                                    }
+                                    
+                                    // 清除神人模式状态
+                                    if (gameState.divine_mode && gameState.divine_mode.playerId === socket.id) {
+                                        gameState.divine_mode = null;
+                                    }
+                                    
+                                    // 解除所有敌人的禁锢状态（客户端立即解除）
+                                    if (gameState.enemies) {
+                                        for (let enemy of gameState.enemies) {
+                                            enemy.stunned = false;
+                                            enemy.stun_end = 0;
+                                            enemy.frozen = false;
+                                            enemy.frozen_end = 0;
+                                        }
+                                        console.log('✓ 客户端已解除所有敌人禁锢状态');
+                                    }
+                                    
+                                    // 通知服务器中断Q技能并解除敌人禁锢
+                                    socket.emit('interrupt_prince_q_skill', {
+                                        room_key: ROOM_KEY
+                                    });
+                                } else if (elapsed >= activeDuration) {
+                                    // 其他角色：激活时间已过，结束激活
+                                    localPlayer.skills.Q.active = false;
+                                    if (PLAYER_AVATAR.character === '公主蓉') {
+                                        // 公主蓉Q技能结束，清空充能
+                                        localPlayer.skills.Q.charge = 0;
+                                    }
+                                    console.log('✓ 刷新后检测到Q技能激活时间已过，已结束激活');
+                                } else {
+                                    // 仍在激活时间内，恢复激活状态
+                                    localPlayer.skills.Q.active = true;
+                                    localPlayer.skills.Q.activeTime = serverSkills.Q.activeTime;
+                                    localPlayer.skills.Q.activeDuration = activeDuration;
+                                    
+                                    // 公主蓉Q技能：通知服务器恢复光环效果
+                                    if (PLAYER_AVATAR.character === '公主蓉') {
+                                        socket.emit('activate_q_skill', {
+                                            room_key: ROOM_KEY,
+                                            skill_type: 'princess_aura'
+                                        });
+                                        console.log('✓ 公主蓉Q技能：通知服务器恢复光环效果');
+                                    }
+                                }
+                            } else {
+                                localPlayer.skills.Q.active = false;
+                            }
+                        }
+                        
+                        // 恢复冷却时间（需要重新计算，因为时间已经过去）
+                        // 注意：如果已经在虚影阶段被取消，冷却时间已经在上面设置为0了
+                        if (!(PLAYER_AVATAR.character === '幺幺俊羊羊' && serverSkills.Q.showingShadow)) {
+                            if (serverSkills.Q.cooldown !== undefined && serverSkills.Q.cooldown > 0) {
+                                if (serverSkills.Q.cooldownStart !== undefined && serverSkills.Q.cooldownTime !== undefined) {
+                                    // 使用cooldownStart和cooldownTime计算剩余冷却时间
+                                    const elapsed = currentTime - serverSkills.Q.cooldownStart;
+                                    const remainingCooldown = serverSkills.Q.cooldownTime - elapsed;
+                                    if (remainingCooldown > 0) {
+                                        localPlayer.skills.Q.cooldown = remainingCooldown;
+                                        localPlayer.skills.Q.cooldownTime = serverSkills.Q.cooldownTime;
+                                        localPlayer.skills.Q.cooldownStart = serverSkills.Q.cooldownStart;
+                                        console.log(`✓ Q技能冷却恢复: 剩余${remainingCooldown.toFixed(2)}秒 (总冷却${serverSkills.Q.cooldownTime}秒, 已过${elapsed.toFixed(2)}秒)`);
+                                    } else {
+                                        // 冷却时间已过
+                                        localPlayer.skills.Q.cooldown = 0;
+                                        localPlayer.skills.Q.cooldownStart = 0;
+                                        console.log('✓ Q技能冷却已结束');
+                                    }
+                                } else {
+                                    // 缺少cooldownStart，无法准确恢复，设置为0
+                                    localPlayer.skills.Q.cooldown = 0;
+                                    localPlayer.skills.Q.cooldownStart = 0;
+                                    console.log(`⚠️ Q技能冷却恢复: 缺少cooldownStart，无法准确恢复，已重置为0`);
+                                }
+                            } else {
+                                localPlayer.skills.Q.cooldown = 0;
+                                localPlayer.skills.Q.cooldownStart = 0;
+                            }
+                        }
+                    }
+                }
+                
+                if (serverSkills.E) {
+                    if (localPlayer.skills.E) {
+                        // 幺幺俊羊羊E技能特殊处理：如果在显示虚影阶段刷新，取消虚影状态
+                        if (PLAYER_AVATAR.character === '幺幺俊羊羊' && serverSkills.E.showingShadow) {
+                            localPlayer.skills.E.active = false;
+                            localPlayer.skills.E.showingShadow = false;
+                            localPlayer.skills.E.cooldown = 0;
+                            localPlayer.skills.E.cooldownStart = 0;
+                            console.log('🍎 幺幺俊羊羊E技能：刷新时取消虚影状态（不进入冷却）');
+                        } else {
+                            // 处理激活状态：如果技能处于激活状态，检查是否应该结束
+                            if (serverSkills.E.active && serverSkills.E.activeTime !== undefined) {
+                                const elapsed = currentTime - serverSkills.E.activeTime;
+                                const activeDuration = serverSkills.E.activeDuration || 10;
+                                
+                                // 幺幺俊羊羊E技能：放置毒苹果后进入冷却
+                                if (PLAYER_AVATAR.character === '幺幺俊羊羊') {
+                                    // 如果激活时间已过，结束激活并保持冷却状态
+                                    if (elapsed >= activeDuration) {
+                                        localPlayer.skills.E.active = false;
+                                        // 保持服务器端的冷却状态
+                                        if (serverSkills.E.cooldown !== undefined && serverSkills.E.cooldown > 0) {
+                                            if (serverSkills.E.cooldownStart !== undefined && serverSkills.E.cooldownTime !== undefined) {
+                                                const cooldownElapsed = currentTime - serverSkills.E.cooldownStart;
+                                                const remainingCooldown = serverSkills.E.cooldownTime - cooldownElapsed;
+                                                if (remainingCooldown > 0) {
+                                                    localPlayer.skills.E.cooldown = remainingCooldown;
+                                                    localPlayer.skills.E.cooldownTime = serverSkills.E.cooldownTime;
+                                                    localPlayer.skills.E.cooldownStart = serverSkills.E.cooldownStart;
+                                                    console.log(`✓ 幺幺俊羊羊E技能冷却恢复: 剩余${remainingCooldown.toFixed(2)}秒`);
+                                                } else {
+                                                    localPlayer.skills.E.cooldown = 0;
+                                                    localPlayer.skills.E.cooldownStart = 0;
+                                                }
+                                            } else {
+                                                localPlayer.skills.E.cooldown = serverSkills.E.cooldown || 0;
+                                                localPlayer.skills.E.cooldownTime = serverSkills.E.cooldownTime || 5;
+                                                localPlayer.skills.E.cooldownStart = currentTime;
+                                            }
+                                        } else {
+                                            localPlayer.skills.E.cooldown = 0;
+                                            localPlayer.skills.E.cooldownStart = 0;
+                                        }
+                                        console.log('✓ 刷新后检测到幺幺俊羊羊E技能激活时间已过，已结束激活');
+                                    } else {
+                                        // 仍在激活时间内，恢复激活状态，但也要保持冷却状态（因为拉取后立即进入冷却）
+                                        localPlayer.skills.E.active = true;
+                                        localPlayer.skills.E.activeTime = serverSkills.E.activeTime;
+                                        localPlayer.skills.E.activeDuration = activeDuration;
+                                        // 如果服务器端有冷却状态，也要恢复
+                                        if (serverSkills.E.cooldown !== undefined && serverSkills.E.cooldown > 0) {
+                                            if (serverSkills.E.cooldownStart !== undefined && serverSkills.E.cooldownTime !== undefined) {
+                                                const cooldownElapsed = currentTime - serverSkills.E.cooldownStart;
+                                                const remainingCooldown = serverSkills.E.cooldownTime - cooldownElapsed;
+                                                if (remainingCooldown > 0) {
+                                                    localPlayer.skills.E.cooldown = remainingCooldown;
+                                                    localPlayer.skills.E.cooldownTime = serverSkills.E.cooldownTime;
+                                                    localPlayer.skills.E.cooldownStart = serverSkills.E.cooldownStart;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // 其他角色的E技能
+                                    if (elapsed >= activeDuration) {
+                                        // 激活时间已过，结束激活并进入冷却
+                                        localPlayer.skills.E.active = false;
+                                        localPlayer.skills.E.cooldown = serverSkills.E.cooldownTime || 8;
+                                        localPlayer.skills.E.cooldownTime = serverSkills.E.cooldownTime || 8;
+                                        localPlayer.skills.E.cooldownStart = currentTime;
+                                        console.log('✓ 刷新后检测到E技能激活时间已过，已结束激活并进入冷却');
+                                        
+                                        // 通知服务器E技能结束
+                                        socket.emit('deactivate_e_skill', {
+                                            room_key: ROOM_KEY,
+                                            skill_type: PLAYER_AVATAR.character === '星耀犊' ? 'star_boost' : 
+                                                       (PLAYER_AVATAR.character === '公主蓉' ? 'princess_optimization' : 'warrior_enhance')
+                                        });
+                                    } else {
+                                        // 仍在激活时间内，恢复激活状态
+                                        localPlayer.skills.E.active = true;
+                                        localPlayer.skills.E.activeTime = serverSkills.E.activeTime;
+                                        localPlayer.skills.E.activeDuration = activeDuration;
+                                    }
+                                }
+                            } else {
+                                localPlayer.skills.E.active = false;
+                                
+                                // 恢复冷却时间（需要重新计算）
+                                if (serverSkills.E.cooldown !== undefined && serverSkills.E.cooldown > 0) {
+                                    if (serverSkills.E.cooldownStart !== undefined && serverSkills.E.cooldownTime !== undefined) {
+                                        const elapsed = currentTime - serverSkills.E.cooldownStart;
+                                        const remainingCooldown = serverSkills.E.cooldownTime - elapsed;
+                                        if (remainingCooldown > 0) {
+                                            localPlayer.skills.E.cooldown = remainingCooldown;
+                                            localPlayer.skills.E.cooldownTime = serverSkills.E.cooldownTime;
+                                            localPlayer.skills.E.cooldownStart = serverSkills.E.cooldownStart;
+                                            console.log(`✓ E技能冷却恢复: 剩余${remainingCooldown.toFixed(2)}秒`);
+                                        } else {
+                                            localPlayer.skills.E.cooldown = 0;
+                                            localPlayer.skills.E.cooldownStart = 0;
+                                            console.log('✓ E技能冷却已结束');
+                                        }
+                                    } else {
+                                        // 缺少cooldownStart，无法准确恢复，设置为0
+                                        localPlayer.skills.E.cooldown = 0;
+                                        localPlayer.skills.E.cooldownStart = 0;
+                                        console.log(`⚠️ E技能冷却恢复: 缺少cooldownStart，无法准确恢复，已重置为0`);
+                                    }
+                                } else {
+                                    localPlayer.skills.E.cooldown = 0;
+                                    localPlayer.skills.E.cooldownStart = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (serverSkills.rightClick) {
+                    if (localPlayer.skills.rightClick) {
+                        // 幺幺俊羊羊右键技能特殊处理：如果在选择玩家模式刷新，取消选择状态
+                        if (PLAYER_AVATAR.character === '幺幺俊羊羊' && serverSkills.rightClick.selectingPlayer) {
+                            localPlayer.skills.rightClick.active = false;
+                            localPlayer.skills.rightClick.selectingPlayer = false;
+                            localPlayer.skills.rightClick.cooldown = 0;
+                            localPlayer.skills.rightClick.cooldownStart = 0;
+                            console.log('🍎 幺幺俊羊羊右键技能：刷新时取消选择状态（不进入冷却）');
+                        } else {
+                            // 处理激活状态：如果技能处于激活状态，检查是否应该结束
+                            if (serverSkills.rightClick.active && serverSkills.rightClick.activeTime !== undefined) {
+                                const elapsed = currentTime - serverSkills.rightClick.activeTime;
+                                const activeDuration = serverSkills.rightClick.activeDuration || 0.6;
+                                
+                                // 星耀犊右键技能特殊处理：如果没有发射满80发，不进入冷却
+                                if (PLAYER_AVATAR.character === '星耀犊') {
+                                    // 星耀犊右键技能：如果激活时间已过，结束激活但不进入冷却（除非发射满80发）
+                                    if (elapsed >= activeDuration) {
+                                        localPlayer.skills.rightClick.active = false;
+                                        // 不设置冷却时间（因为可能没有发射满80发）
+                                        console.log('✓ 刷新后检测到星耀犊右键技能激活时间已过，已结束激活（不进入冷却）');
+                                    } else {
+                                        // 仍在激活时间内，恢复激活状态
+                                        localPlayer.skills.rightClick.active = true;
+                                        localPlayer.skills.rightClick.activeTime = serverSkills.rightClick.activeTime;
+                                        localPlayer.skills.rightClick.activeDuration = activeDuration;
+                                    }
+                                } else if (PLAYER_AVATAR.character === '幺幺俊羊羊') {
+                                    // 幺幺俊羊羊右键技能：激活后立即进入冷却（赋予泡泡盾后）
+                                    // 如果激活时间已过，结束激活并保持冷却状态
+                                    if (elapsed >= activeDuration) {
+                                        localPlayer.skills.rightClick.active = false;
+                                        // 保持服务器端的冷却状态
+                                        if (serverSkills.rightClick.cooldown !== undefined && serverSkills.rightClick.cooldown > 0) {
+                                            if (serverSkills.rightClick.cooldownStart !== undefined && serverSkills.rightClick.cooldownTime !== undefined) {
+                                                const cooldownElapsed = currentTime - serverSkills.rightClick.cooldownStart;
+                                                const remainingCooldown = serverSkills.rightClick.cooldownTime - cooldownElapsed;
+                                                if (remainingCooldown > 0) {
+                                                    localPlayer.skills.rightClick.cooldown = remainingCooldown;
+                                                    localPlayer.skills.rightClick.cooldownTime = serverSkills.rightClick.cooldownTime;
+                                                    localPlayer.skills.rightClick.cooldownStart = serverSkills.rightClick.cooldownStart;
+                                                    console.log(`✓ 幺幺俊羊羊右键技能冷却恢复: 剩余${remainingCooldown.toFixed(2)}秒`);
+                                                } else {
+                                                    localPlayer.skills.rightClick.cooldown = 0;
+                                                    localPlayer.skills.rightClick.cooldownStart = 0;
+                                                }
+                                            } else {
+                                                localPlayer.skills.rightClick.cooldown = serverSkills.rightClick.cooldown || 0;
+                                                localPlayer.skills.rightClick.cooldownTime = serverSkills.rightClick.cooldownTime || 8;
+                                                localPlayer.skills.rightClick.cooldownStart = currentTime;
+                                            }
+                                        } else {
+                                            localPlayer.skills.rightClick.cooldown = 0;
+                                            localPlayer.skills.rightClick.cooldownStart = 0;
+                                        }
+                                        console.log('✓ 刷新后检测到幺幺俊羊羊右键技能激活时间已过，已结束激活');
+                                    } else {
+                                        // 仍在激活时间内，恢复激活状态
+                                        localPlayer.skills.rightClick.active = true;
+                                        localPlayer.skills.rightClick.activeTime = serverSkills.rightClick.activeTime;
+                                        localPlayer.skills.rightClick.activeDuration = activeDuration;
+                                        // 幺幺俊羊羊右键技能：即使还在激活时间内，如果服务器端有冷却状态，也要恢复（因为赋予护盾后立即进入冷却）
+                                        if (serverSkills.rightClick.cooldown !== undefined && serverSkills.rightClick.cooldown > 0) {
+                                            if (serverSkills.rightClick.cooldownStart !== undefined && serverSkills.rightClick.cooldownTime !== undefined) {
+                                                const cooldownElapsed = currentTime - serverSkills.rightClick.cooldownStart;
+                                                const remainingCooldown = serverSkills.rightClick.cooldownTime - cooldownElapsed;
+                                                if (remainingCooldown > 0) {
+                                                    localPlayer.skills.rightClick.cooldown = remainingCooldown;
+                                                    localPlayer.skills.rightClick.cooldownTime = serverSkills.rightClick.cooldownTime;
+                                                    localPlayer.skills.rightClick.cooldownStart = serverSkills.rightClick.cooldownStart;
+                                                    console.log(`✓ 幺幺俊羊羊右键技能冷却恢复（激活中）: 剩余${remainingCooldown.toFixed(2)}秒`);
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // 其他角色的右键技能：激活时间已过，结束激活并进入冷却
+                                    if (elapsed >= activeDuration) {
+                                        localPlayer.skills.rightClick.active = false;
+                                        localPlayer.skills.rightClick.cooldown = serverSkills.rightClick.cooldownTime || 8;
+                                        localPlayer.skills.rightClick.cooldownTime = serverSkills.rightClick.cooldownTime || 8;
+                                        localPlayer.skills.rightClick.cooldownStart = currentTime;
+                                        console.log('✓ 刷新后检测到右键技能激活时间已过，已结束激活并进入冷却');
+                                    } else {
+                                        // 仍在激活时间内，恢复激活状态
+                                        localPlayer.skills.rightClick.active = true;
+                                        localPlayer.skills.rightClick.activeTime = serverSkills.rightClick.activeTime;
+                                        localPlayer.skills.rightClick.activeDuration = activeDuration;
+                                    }
+                                }
+                            } else {
+                                localPlayer.skills.rightClick.active = false;
+                                
+                                // 恢复冷却时间（需要重新计算）
+                                if (serverSkills.rightClick.cooldown !== undefined && serverSkills.rightClick.cooldown > 0) {
+                                    if (serverSkills.rightClick.cooldownStart !== undefined && serverSkills.rightClick.cooldownTime !== undefined) {
+                                        const elapsed = currentTime - serverSkills.rightClick.cooldownStart;
+                                        const remainingCooldown = serverSkills.rightClick.cooldownTime - elapsed;
+                                        if (remainingCooldown > 0) {
+                                            localPlayer.skills.rightClick.cooldown = remainingCooldown;
+                                            localPlayer.skills.rightClick.cooldownTime = serverSkills.rightClick.cooldownTime;
+                                            localPlayer.skills.rightClick.cooldownStart = serverSkills.rightClick.cooldownStart;
+                                            console.log(`✓ 右键技能冷却恢复: 剩余${remainingCooldown.toFixed(2)}秒`);
+                                        } else {
+                                            localPlayer.skills.rightClick.cooldown = 0;
+                                            localPlayer.skills.rightClick.cooldownStart = 0;
+                                            console.log('✓ 右键技能冷却已结束');
+                                        }
+                                    } else {
+                                        // 缺少cooldownStart，无法准确恢复，设置为0
+                                        localPlayer.skills.rightClick.cooldown = 0;
+                                        localPlayer.skills.rightClick.cooldownStart = 0;
+                                        console.log(`⚠️ 右键技能冷却恢复: 缺少cooldownStart，无法准确恢复，已重置为0`);
+                                    }
+                                } else {
+                                    localPlayer.skills.rightClick.cooldown = 0;
+                                    localPlayer.skills.rightClick.cooldownStart = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 恢复弹容量（如果服务器有保存）
+                if (serverSkills.weapon) {
+                    if (serverSkills.weapon.currentAmmo !== undefined) {
+                        // 恢复弹容量
+                        localPlayer.weapon.currentAmmo = Math.min(serverSkills.weapon.currentAmmo, localPlayer.weapon.maxAmmo);
+                        console.log(`✓ 弹容量恢复: ${localPlayer.weapon.currentAmmo}/${localPlayer.weapon.maxAmmo}`);
+                        
+                        // 恢复换弹状态
+                        if (serverSkills.weapon.reloadStartTime !== undefined && serverSkills.weapon.reloadStartTime > 0) {
+                            const reloadElapsed = currentTime - serverSkills.weapon.reloadStartTime;
+                            if (reloadElapsed < localPlayer.weapon.reloadTime) {
+                                // 仍在换弹中
+                                localPlayer.weapon.reloadStartTime = serverSkills.weapon.reloadStartTime;
+                                isReloading = true;
+                                document.getElementById('reloadingText').style.display = 'block';
+                                console.log(`✓ 换弹状态恢复: 剩余${(localPlayer.weapon.reloadTime - reloadElapsed).toFixed(2)}秒`);
+                            } else {
+                                // 换弹已完成
+                                localPlayer.weapon.reloadStartTime = 0;
+                                isReloading = false;
+                                document.getElementById('reloadingText').style.display = 'none';
+                            }
+                        } else {
+                            localPlayer.weapon.reloadStartTime = 0;
+                            isReloading = false;
+                            document.getElementById('reloadingText').style.display = 'none';
+                        }
+                        
+                        updateAmmoDisplay();
+                    }
+                }
+                
+                // 更新技能按钮显示
+                if (typeof updateSkillButtons === 'function') {
+                    updateSkillButtons();
+                }
             }
         }
     }
@@ -421,13 +967,55 @@ socket.on('game_state', (data) => {
         gameState.bullets = data.bullets;
     }
     if (data.enemies !== undefined) {
-        gameState.enemies = data.enemies;
+        // 刷新页面时，确保敌人状态正确恢复
+                gameState.enemies = data.enemies.map(enemy => {
+                    // 如果敌人没有速度，随机生成一个
+                    if (!enemy.vx || !enemy.vy) {
+                        const speed = enemy.speed || 200;
+                        enemy.vx = enemy.vx || (Math.random() - 0.5) * speed * 2;
+                        enemy.vy = enemy.vy || (Math.random() - 0.5) * speed * 2;
+                    }
+                    // 确保有方向改变相关的属性
+                    if (enemy.direction_change_timer === undefined) {
+                        enemy.direction_change_timer = 0;
+                    }
+                    if (enemy.direction_change_interval === undefined) {
+                        enemy.direction_change_interval = 1.0 + Math.random() * 2.0;  // 1-3秒
+                    }
+                    // 确保有所有特效字段
+                    return {
+                        ...enemy,
+                        sonic_boom_end: enemy.sonic_boom_end || 0,
+                        shatter_end: enemy.shatter_end || 0,
+                        hit_flash_end: enemy.hit_flash_end || 0,
+                        crit_shake_end: enemy.crit_shake_end || 0,
+                        heal_flash_end: enemy.heal_flash_end || 0,
+                        poisoned: enemy.poisoned !== undefined ? enemy.poisoned : false  // 明确同步中毒状态
+                    };
+                });
+        console.log('✓ 恢复敌人状态:', gameState.enemies.length, '个敌人');
     }
     if (data.beams !== undefined) {
         gameState.beams = data.beams;
     }
     if (data.countdown !== undefined) {
         gameState.countdown = data.countdown;
+    }
+    if (data.soul_balls !== undefined) {
+        gameState.soul_balls = data.soul_balls;
+        console.log('✓ 恢复灵魂球状态:', Object.keys(data.soul_balls).length, '个灵魂球');
+    }
+    if (data.q_skills !== undefined) {
+        gameState.q_skills = data.q_skills;
+        console.log('✓ 恢复Q技能状态:', Object.keys(data.q_skills).length, '个Q技能');
+    }
+    if (data.big_apples !== undefined) {
+        gameState.big_apples = data.big_apples;
+        console.log('✓ 恢复巨大苹果状态:', Object.keys(data.big_apples).length, '个巨大苹果');
+    }
+    if (data.poison_apples !== undefined) {
+        gameState.poison_apples = data.poison_apples;
+        console.log('✓ 恢复毒苹果状态:', Object.keys(data.poison_apples).length, '个毒苹果');
     }
     gameState.gameRunning = wasRunning;  // 恢复运行状态
     gameState.isDead = wasDead;  // 保留死亡状态
@@ -623,10 +1211,34 @@ socket.on('player_revived', (data) => {
     // 更新玩家状态
     if (gameState.players[playerId]) {
         gameState.players[playerId].hp = data.hp || gameState.players[playerId].maxHp;
+        // 更新玩家位置（如果提供了）
+        if (data.x !== undefined && data.y !== undefined) {
+            gameState.players[playerId].x = data.x;
+            gameState.players[playerId].y = data.y;
+        }
+        
+        // 如果是本地玩家被复活
         if (playerId === socket.id) {
             localPlayer.hp = data.hp || localPlayer.maxHp;
+            // 更新位置
+            if (data.x !== undefined && data.y !== undefined) {
+                localPlayer.x = data.x;
+                localPlayer.y = data.y;
+            }
+            
+            // 移除死亡状态
             gameState.isDead = false;
+            
+            // 隐藏死亡屏幕
+            const deathOverlay = document.getElementById('deathOverlay');
+            if (deathOverlay) {
+                deathOverlay.style.display = 'none';
+            }
+            
+            // 更新生命值显示
             updateHealthBar();
+            
+            console.log(`💛 您已复活！HP: ${localPlayer.hp}/${localPlayer.maxHp}, 位置: (${localPlayer.x}, ${localPlayer.y})`);
         }
     }
     
@@ -695,6 +1307,52 @@ socket.on('white_screen_fade_out', (data) => {
         gameState.white_overlay.phase = 'fade_out';
         gameState.white_overlay.fadeOutStartTime = data.fadeOutStartTime;
         console.log('⚡ 白光开始淡出，碎片特效和白色界面一起在1.5秒内逐渐淡去');
+    }
+});
+
+// 敌人解除禁锢事件
+socket.on('enemies_unfrozen', (data) => {
+    // 解除所有敌人的禁锢状态
+    if (gameState.enemies) {
+        for (let enemy of gameState.enemies) {
+            enemy.stunned = false;
+            enemy.stun_end = 0;
+            enemy.frozen = false;
+            enemy.frozen_end = 0;
+        }
+        console.log('✓ 收到服务器通知：已解除所有敌人禁锢状态');
+    }
+});
+
+// 技能状态更新事件
+socket.on('skill_state_updated', (data) => {
+    // 如果是本地玩家的技能状态更新，同步到本地
+    if (data.playerId === socket.id && data.skills) {
+        if (data.skills.Q && localPlayer.skills.Q) {
+            if (data.skills.Q.charge !== undefined) {
+                localPlayer.skills.Q.charge = data.skills.Q.charge;
+                console.log(`✓ 技能状态已更新：Q技能充能=${localPlayer.skills.Q.charge}%`);
+                updateSkillButtons();
+            }
+        }
+    }
+});
+
+// 敌人中毒状态事件
+socket.on('enemy_poisoned', (data) => {
+    const enemy = gameState.enemies.find(e => e.id === data.enemyId);
+    if (enemy) {
+        enemy.poisoned = true;
+        console.log(`✓ 敌人 ${data.enemyId} 已中毒`);
+    }
+});
+
+// 敌人中毒状态清除事件
+socket.on('enemy_poison_cleared', (data) => {
+    const enemy = gameState.enemies.find(e => e.id === data.enemyId);
+    if (enemy) {
+        enemy.poisoned = false;
+        console.log(`✓ 敌人 ${data.enemyId} 的中毒状态已清除`);
     }
 });
 
@@ -795,6 +1453,10 @@ socket.on('game_state_update', (data) => {
                 if (serverEnemy.heal_flash_end !== undefined) {
                     localEnemy.heal_flash_end = serverEnemy.heal_flash_end;
                 }
+                // 同步中毒状态
+                if (serverEnemy.poisoned !== undefined) {
+                    localEnemy.poisoned = serverEnemy.poisoned;
+                }
             } else {
                 // 新敌人，直接添加（确保包含所有特效字段）
                 const newEnemy = {
@@ -803,7 +1465,8 @@ socket.on('game_state_update', (data) => {
                     shatter_end: serverEnemy.shatter_end || 0,
                     hit_flash_end: serverEnemy.hit_flash_end || 0,
                     crit_shake_end: serverEnemy.crit_shake_end || 0,
-                    heal_flash_end: serverEnemy.heal_flash_end || 0
+                    heal_flash_end: serverEnemy.heal_flash_end || 0,
+                    poisoned: serverEnemy.poisoned || false
                 };
                 gameState.enemies.push(newEnemy);
             }
@@ -882,6 +1545,11 @@ socket.on('team_stats', (teamStats) => {
 
 // 键盘事件
 document.addEventListener('keydown', (e) => {
+    // 如果阵亡，禁用所有按键操作
+    if (gameState.isDead || localPlayer.hp <= 0) {
+        return;
+    }
+    
     const key = e.key.toLowerCase();
     keys[key] = true;
     
@@ -917,6 +1585,11 @@ document.addEventListener('mousemove', (e) => {
 });
 
 document.addEventListener('mousedown', (e) => {
+    // 如果阵亡，禁用所有鼠标操作
+    if (gameState.isDead || localPlayer.hp <= 0) {
+        return;
+    }
+    
     if (e.button === 0) {  // 左键
         console.log('鼠标左键按下');
         
@@ -969,6 +1642,11 @@ document.addEventListener('mouseup', (e) => {
 
 // 鼠标右键事件（技能）
 document.addEventListener('mousedown', (e) => {
+    // 如果阵亡，禁用所有鼠标操作
+    if (gameState.isDead || localPlayer.hp <= 0) {
+        return;
+    }
+    
     if (e.button === 2) {  // 右键
         e.preventDefault();
         
@@ -1027,6 +1705,11 @@ document.addEventListener('contextmenu', (e) => {
 
 // 键盘事件 - 技能
 document.addEventListener('keydown', (e) => {
+    // 如果阵亡，禁用所有技能按键操作
+    if (gameState.isDead || localPlayer.hp <= 0) {
+        return;
+    }
+    
     const key = e.key.toLowerCase();
     
     // C键切换角色面板
@@ -1053,18 +1736,7 @@ document.addEventListener('keydown', (e) => {
             }
         }
         
-        // E技能选择玩家
-        if (eSkill.selectingPlayer && (key === '1' || key === '2' || key === '3' || key === '4')) {
-            const selectedIndex = parseInt(key) - 1;
-            if (selectedIndex >= 0 && selectedIndex < eSkill.playerList.length) {
-                const selectedPlayer = eSkill.playerList[selectedIndex];
-                pullTeammateToPosition(selectedPlayer.id);
-                eSkill.selectingPlayer = false;
-                eSkill.playerList = [];
-                hidePlayerSelectionUI();
-                return;
-            }
-        }
+        // E技能不再需要选择玩家（现在是放置毒苹果）
     }
     
     if (key === 'q') {
@@ -1082,6 +1754,14 @@ window.addEventListener('resize', () => {
 
 // 玩家移动
 function updatePlayer(deltaTime) {
+    // 检查是否阵亡，如果阵亡则禁用所有操作
+    if (gameState.isDead || localPlayer.hp <= 0) {
+        gameState.isDead = true;
+        localPlayer.hp = 0;
+        // 阵亡玩家不移动、不射击、不换弹、不使用技能
+        return;
+    }
+    
     let moved = false;
     let oldX = localPlayer.x;
     let oldY = localPlayer.y;
@@ -3038,13 +3718,18 @@ function updateSkillButtons() {
 
 // 更新技能状态
 function updateSkills(deltaTime) {
+    // 如果阵亡，不更新技能状态（包括Q技能充能）
+    if (gameState.isDead || localPlayer.hp <= 0) {
+        return;
+    }
+    
     const character = PLAYER_AVATAR.character;
     const currentTime = Date.now() / 1000;
     
     if (character === '勇者') {
         // Q技能充能更新
         const qSkill = localPlayer.skills.Q;
-        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0) {
+        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !gameState.isDead && localPlayer.hp > 0) {
             // 倒计时结束后，每1秒获得1%充能
             if (qSkill.lastChargeTime === 0) {
                 qSkill.lastChargeTime = currentTime;
@@ -3100,7 +3785,7 @@ function updateSkills(deltaTime) {
     } else if (character === '星耀犊') {
         // 星耀犊Q技能充能更新
         const qSkill = localPlayer.skills.Q;
-        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active) {
+        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active && !gameState.isDead && localPlayer.hp > 0) {
             // 倒计时结束后，每1秒获得1%充能（仅在未激活时）
             if (qSkill.lastChargeTime === 0) {
                 qSkill.lastChargeTime = currentTime;
@@ -3260,7 +3945,7 @@ function updateSkills(deltaTime) {
     } else if (character === '公主蓉') {
         // 公主蓉Q技能充能更新
         const qSkill = localPlayer.skills.Q;
-        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active) {
+        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active && !gameState.isDead && localPlayer.hp > 0) {
             // 倒计时结束后，每秒获得5%充能
             if (qSkill.lastChargeTime === 0) {
                 qSkill.lastChargeTime = currentTime;
@@ -3381,7 +4066,7 @@ function updateSkills(deltaTime) {
     } else if (character === '幺幺俊羊羊') {
         // 幺幺俊羊羊Q技能充能更新
         const qSkill = localPlayer.skills.Q;
-        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active) {
+        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active && !gameState.isDead && localPlayer.hp > 0) {
             // 倒计时结束后，每秒获得1%充能
             if (qSkill.lastChargeTime === 0) {
                 qSkill.lastChargeTime = currentTime;
@@ -3451,7 +4136,7 @@ function updateSkills(deltaTime) {
     } else if (character === '王子栗') {
         // 王子栗Q技能充能更新（每秒5%，左键命中敌人+2%）
         const qSkill = localPlayer.skills.Q;
-        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active) {
+        if (qSkill.charge < qSkill.maxCharge && gameState.countdown === 0 && !qSkill.active && !gameState.isDead && localPlayer.hp > 0) {
             if (qSkill.lastChargeTime === 0) {
                 qSkill.lastChargeTime = currentTime;
             }
@@ -3513,6 +4198,51 @@ function updateSkills(deltaTime) {
                 updateSkillButtons();
             }
         }
+    }
+    
+    // 定期同步技能状态到服务器（每0.5秒同步一次）
+    if (currentTime - lastSkillsSyncTime >= SKILLS_SYNC_INTERVAL) {
+        // 同步技能状态到服务器（包含弹容量）
+        socket.emit('sync_skills_state', {
+            room_key: ROOM_KEY,
+            skills: {
+                Q: {
+                    active: localPlayer.skills.Q.active,
+                    cooldown: localPlayer.skills.Q.cooldown,
+                    cooldownTime: localPlayer.skills.Q.cooldownTime,
+                    cooldownStart: localPlayer.skills.Q.cooldownStart,
+                    charge: localPlayer.skills.Q.charge,
+                    maxCharge: localPlayer.skills.Q.maxCharge,
+                    lastChargeTime: localPlayer.skills.Q.lastChargeTime,
+                    activeTime: localPlayer.skills.Q.activeTime,
+                    activeDuration: localPlayer.skills.Q.activeDuration,
+                    showingShadow: localPlayer.skills.Q.showingShadow || false  // 幺幺俊羊羊Q技能虚影状态
+                },
+                E: {
+                    active: localPlayer.skills.E.active,
+                    cooldown: localPlayer.skills.E.cooldown,
+                    cooldownTime: localPlayer.skills.E.cooldownTime,
+                    cooldownStart: localPlayer.skills.E.cooldownStart,
+                    activeTime: localPlayer.skills.E.activeTime,
+                    activeDuration: localPlayer.skills.E.activeDuration,
+                    showingShadow: localPlayer.skills.E.showingShadow || false  // 幺幺俊羊羊E技能虚影状态
+                },
+                rightClick: {
+                    active: localPlayer.skills.rightClick.active,
+                    cooldown: localPlayer.skills.rightClick.cooldown,
+                    cooldownTime: localPlayer.skills.rightClick.cooldownTime,
+                    cooldownStart: localPlayer.skills.rightClick.cooldownStart,
+                    activeTime: localPlayer.skills.rightClick.activeTime,
+                    activeDuration: localPlayer.skills.rightClick.activeDuration
+                },
+                weapon: {
+                    currentAmmo: localPlayer.weapon.currentAmmo,  // 保存弹容量
+                    maxAmmo: localPlayer.weapon.maxAmmo,
+                    reloadStartTime: localPlayer.weapon.reloadStartTime || 0  // 保存换弹开始时间
+                }
+            }
+        });
+        lastSkillsSyncTime = currentTime;
     }
     
     // 更新按钮显示
@@ -4765,6 +5495,11 @@ function drawLockBoxes(lockSkill) {
 
 // 绘制玩家
 function drawPlayer(player, isLocal, playerId = null) {
+    // 如果玩家已阵亡，不绘制图标
+    if (player.hp <= 0) {
+        return;
+    }
+    
     const playerSize = 100;  // 玩家图片大小
     const halfSize = playerSize / 2;
     const currentTime = Date.now() / 1000;
@@ -5518,6 +6253,9 @@ function drawEnemy(enemy) {
         shakeOffsetY = (Math.random() - 0.5) * shakeIntensity;
     }
     
+    // 检查是否中毒
+    const isPoisoned = enemy.poisoned || false;
+    
     // 绘制敌人图片
     const img = loadEnemyImage(enemy.type);
     if (img.complete && img.naturalWidth > 0) {
@@ -5527,27 +6265,82 @@ function drawEnemy(enemy) {
         // 绘制敌人图片
         ctx.drawImage(img, -halfSize, -halfSize, enemySize, enemySize);
         
+        // 中毒效果：在敌人图标的不透明部分蒙上半透明的深绿色
+        if (isPoisoned) {
+            // 创建临时canvas提取不透明像素
+            const poisonCanvas = document.createElement('canvas');
+            poisonCanvas.width = enemySize;
+            poisonCanvas.height = enemySize;
+            const poisonCtx = poisonCanvas.getContext('2d');
+            poisonCtx.drawImage(img, 0, 0, enemySize, enemySize);
+            
+            // 获取图像数据，只对不透明像素应用深绿色蒙层
+            const imageData = poisonCtx.getImageData(0, 0, enemySize, enemySize);
+            const data = imageData.data;
+            const darkGreen = { r: 0, g: 100, b: 0 };  // 深绿色 RGB(0, 100, 0)
+            const greenAlpha = 0.5;  // 50%透明度
+            
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] > 0) {  // 不透明像素
+                    // 混合深绿色：将深绿色以50%透明度叠加到原有颜色上
+                    const originalR = data[i];
+                    const originalG = data[i + 1];
+                    const originalB = data[i + 2];
+                    
+                    // 混合公式：newColor = originalColor * (1 - alpha) + overlayColor * alpha
+                    data[i] = Math.min(255, originalR * (1 - greenAlpha) + darkGreen.r * greenAlpha);      // R
+                    data[i + 1] = Math.min(255, originalG * (1 - greenAlpha) + darkGreen.g * greenAlpha);  // G
+                    data[i + 2] = Math.min(255, originalB * (1 - greenAlpha) + darkGreen.b * greenAlpha);  // B
+                    // Alpha保持不变
+                }
+            }
+            
+            poisonCtx.putImageData(imageData, 0, 0);
+            ctx.drawImage(poisonCanvas, -halfSize, -halfSize, enemySize, enemySize);
+        }
+        
         // 受击闪烁效果：只在图标不透明部分变红，透明背景不变
+        // 如果敌人中毒，受击闪烁应该在绿色基础上闪烁红色
         if (isFlashing && !isHealing) {
             // 创建临时canvas提取不透明像素
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = enemySize;
             tempCanvas.height = enemySize;
             const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(img, 0, 0, enemySize, enemySize);
             
-                // 获取图像数据，只对不透明像素应用红色
-                const imageData = tempCtx.getImageData(0, 0, enemySize, enemySize);
-                const data = imageData.data;
-                // 提高红色强度，使闪烁更明显（从0.7提高到1.0）
-                const redIntensity = 7.0 * (1 - flashAlpha);
+            // 如果敌人中毒，先绘制绿色版本，否则绘制原图
+            if (isPoisoned) {
+                // 绘制绿色版本的敌人
+                tempCtx.drawImage(img, 0, 0, enemySize, enemySize);
+                const greenImageData = tempCtx.getImageData(0, 0, enemySize, enemySize);
+                const greenData = greenImageData.data;
+                const darkGreen = { r: 0, g: 100, b: 0 };
+                const greenAlpha = 0.5;
                 
-                for (let i = 0; i < data.length; i += 4) {
-                    if (data[i + 3] > 0) {  // 不透明像素
-                        // 混合红色，保持原有颜色但增加红色
-                        data[i] = Math.min(255, data[i] + (255 - data[i]) * redIntensity);
+                for (let i = 0; i < greenData.length; i += 4) {
+                    if (greenData[i + 3] > 0) {
+                        greenData[i] = Math.min(255, greenData[i] * (1 - greenAlpha) + darkGreen.r * greenAlpha);
+                        greenData[i + 1] = Math.min(255, greenData[i + 1] * (1 - greenAlpha) + darkGreen.g * greenAlpha);
+                        greenData[i + 2] = Math.min(255, greenData[i + 2] * (1 - greenAlpha) + darkGreen.b * greenAlpha);
                     }
                 }
+                tempCtx.putImageData(greenImageData, 0, 0);
+            } else {
+                tempCtx.drawImage(img, 0, 0, enemySize, enemySize);
+            }
+            
+            // 获取图像数据，只对不透明像素应用红色闪烁
+            const imageData = tempCtx.getImageData(0, 0, enemySize, enemySize);
+            const data = imageData.data;
+            // 红色强度：根据闪烁状态调整
+            const redIntensity = 0.7 * (1 - flashAlpha);
+            
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] > 0) {  // 不透明像素
+                    // 混合红色，保持原有颜色但增加红色
+                    data[i] = Math.min(255, data[i] + (255 - data[i]) * redIntensity);
+                }
+            }
             
             tempCtx.putImageData(imageData, 0, 0);
             ctx.drawImage(tempCanvas, -halfSize, -halfSize, enemySize, enemySize);
@@ -5592,29 +6385,6 @@ function drawEnemy(enemy) {
         const shatterEnd = enemy.shatter_end || 0;
         if (currentTime < shatterEnd) {
             drawShatter(enemy);
-        }
-        
-        // 绘制中毒效果（明显的绿色蒙层）
-        if (enemy.poisoned) {
-            ctx.save();
-            ctx.translate(enemy.x, enemy.y);
-            // 使用更明显的绿色，直接改变敌人颜色为绿色
-            // 使用color混合模式，直接将敌人染成绿色
-            ctx.globalCompositeOperation = 'color';  // 使用color混合模式，更明显地改变颜色
-            const flashIntensity = (Math.sin(currentTime * 5) + 1) / 2;  // 0到1之间闪烁
-            const greenAlpha = 0.6 + flashIntensity * 0.4;  // 60%到100%透明度闪烁，更明显
-            ctx.fillStyle = `rgba(0, 255, 0, ${greenAlpha})`;  // 亮绿色，更明显
-            ctx.beginPath();
-            ctx.arc(0, 0, halfSize, 0, Math.PI * 2);
-            ctx.fill();
-            // 再叠加一层绿色光晕，使效果更明显
-            ctx.globalCompositeOperation = 'screen';  // 使用screen混合模式叠加光晕
-            ctx.fillStyle = `rgba(0, 255, 0, ${greenAlpha * 0.3})`;  // 绿色光晕
-            ctx.beginPath();
-            ctx.arc(0, 0, halfSize * 1.2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.globalCompositeOperation = 'source-over';  // 恢复默认混合模式
-            ctx.restore();
         }
     } else {
         // 图片未加载，使用占位符
@@ -5739,6 +6509,22 @@ function showDeathScreen() {
     }
 }
 
+// 返回大厅的辅助函数
+function returnToLobby() {
+    const roomKey = typeof ROOM_KEY !== 'undefined' ? ROOM_KEY : '';
+    if (roomKey) {
+        window.location.href = `/lobby/${roomKey}`;
+    } else {
+        // 尝试从URL获取房间密钥
+        const urlMatch = window.location.pathname.match(/\/game\/([A-Z0-9]+)/);
+        if (urlMatch) {
+            window.location.href = `/lobby/${urlMatch[1]}`;
+        } else {
+            window.location.href = '/';
+        }
+    }
+}
+
 // 显示胜利
 function showVictory() {
     gameState.gameRunning = false;
@@ -5752,37 +6538,11 @@ function showVictory() {
     // 设置返回按钮事件
     const returnBtn = document.getElementById('returnToLobbyBtn');
     if (returnBtn) {
-        returnBtn.onclick = function() {
-            const roomKey = typeof ROOM_KEY !== 'undefined' ? ROOM_KEY : '';
-            if (roomKey) {
-                window.location.href = `/lobby/${roomKey}`;
-            } else {
-                // 尝试从URL获取房间密钥
-                const urlMatch = window.location.pathname.match(/\/game\/([A-Z0-9]+)/);
-                if (urlMatch) {
-                    window.location.href = `/lobby/${urlMatch[1]}`;
-                } else {
-                    window.location.href = '/';
-                }
-            }
-        };
+        returnBtn.onclick = returnToLobby;
     }
     
     // 3秒后自动返回大厅
-    setTimeout(() => {
-        const roomKey = typeof ROOM_KEY !== 'undefined' ? ROOM_KEY : '';
-        if (roomKey) {
-            window.location.href = `/lobby/${roomKey}`;
-        } else {
-            // 尝试从URL获取房间密钥
-            const urlMatch = window.location.pathname.match(/\/game\/([A-Z0-9]+)/);
-            if (urlMatch) {
-                window.location.href = `/lobby/${urlMatch[1]}`;
-            } else {
-                window.location.href = '/';
-            }
-        }
-    }, 3000);
+    setTimeout(returnToLobby, 3000);
 }
 
 // 显示失败
@@ -5798,37 +6558,11 @@ function showDefeat() {
     // 设置返回按钮事件
     const returnBtn = document.getElementById('returnToLobbyBtn');
     if (returnBtn) {
-        returnBtn.onclick = function() {
-            const roomKey = typeof ROOM_KEY !== 'undefined' ? ROOM_KEY : '';
-            if (roomKey) {
-                window.location.href = `/lobby/${roomKey}`;
-            } else {
-                // 尝试从URL获取房间密钥
-                const urlMatch = window.location.pathname.match(/\/game\/([A-Z0-9]+)/);
-                if (urlMatch) {
-                    window.location.href = `/lobby/${urlMatch[1]}`;
-                } else {
-                    window.location.href = '/';
-                }
-            }
-        };
+        returnBtn.onclick = returnToLobby;
     }
     
     // 3秒后自动返回大厅
-    setTimeout(() => {
-        const roomKey = typeof ROOM_KEY !== 'undefined' ? ROOM_KEY : '';
-        if (roomKey) {
-            window.location.href = `/lobby/${roomKey}`;
-        } else {
-            // 尝试从URL获取房间密钥
-            const urlMatch = window.location.pathname.match(/\/game\/([A-Z0-9]+)/);
-            if (urlMatch) {
-                window.location.href = `/lobby/${urlMatch[1]}`;
-            } else {
-                window.location.href = '/';
-            }
-        }
-    }, 3000);
+    setTimeout(returnToLobby, 3000);
 }
 
 // 游戏结束
@@ -6171,35 +6905,7 @@ function applyBubbleShieldToPlayer(targetId) {
     updateSkillButtons();
 }
 
-// 拉取队友到位置（幺幺俊羊羊E技能）
-function pullTeammateToPosition(targetId) {
-    const skill = localPlayer.skills.E;
-    
-    // 激活技能状态
-    skill.active = true;
-    skill.activeTime = Date.now() / 1000;
-    skill.activeDuration = 3.0;  // 持续3秒（拉取时间）
-    skill.selectedTargetId = targetId;
-    skill.targetX = localPlayer.x;
-    skill.targetY = localPlayer.y;
-    
-    // 通知服务器拉取队友并赋予泡泡盾
-    socket.emit('pull_teammate_with_shield', {
-        room_key: ROOM_KEY,
-        targetId: targetId,
-        targetX: localPlayer.x,
-        targetY: localPlayer.y,
-        pullSpeed: 20000  // 每秒200像素，加快100倍
-    });
-    
-    // 进入冷却
-    skill.cooldown = 5.0;
-    skill.cooldownTime = 5.0;
-    skill.cooldownStart = Date.now() / 1000;
-    
-    console.log('🍎 幺幺俊羊羊拉取队友:', targetId, '到位置:', localPlayer.x, localPlayer.y);
-    updateSkillButtons();
-}
+// 幺幺俊羊羊E技能现在是放置毒苹果，不再需要拉取队友功能
 
 // 切换队伍角色面板
 function toggleTeamStatsPanel() {
@@ -6223,6 +6929,17 @@ function showTeamStatsPanel() {
     socket.emit('request_team_stats', { room_key: ROOM_KEY });
     
     panel.style.display = 'block';
+    
+    // 启动实时更新定时器（每0.5秒更新一次）
+    if (window.teamStatsUpdateInterval) {
+        clearInterval(window.teamStatsUpdateInterval);
+    }
+    window.teamStatsUpdateInterval = setInterval(() => {
+        // 如果面板是显示的，则更新
+        if (panel.style.display === 'block') {
+            socket.emit('request_team_stats', { room_key: ROOM_KEY });
+        }
+    }, 500);  // 每0.5秒更新一次
 }
 
 // 隐藏队伍角色面板
@@ -6230,6 +6947,12 @@ function hideTeamStatsPanel() {
     const panel = document.getElementById('teamStatsPanel');
     if (!panel) return;
     panel.style.display = 'none';
+    
+    // 清除实时更新定时器
+    if (window.teamStatsUpdateInterval) {
+        clearInterval(window.teamStatsUpdateInterval);
+        window.teamStatsUpdateInterval = null;
+    }
 }
 
 // 更新队伍角色面板内容
@@ -6247,9 +6970,26 @@ function updateTeamStatsPanel(teamStats) {
         const playerName = playerData.name || '未知玩家';
         const isLocalPlayer = playerId === socket.id;
         
-        // 获取当前生命值
-        const currentHp = gameState.players[playerId] ? (gameState.players[playerId].hp || 0) : 0;
+        // 获取当前生命值（优先使用服务器返回的值）
+        let currentHp = playerData.currentHp;
+        if (currentHp === undefined || currentHp === null) {
+            // 如果服务器没有返回，尝试从本地获取
+            if (isLocalPlayer) {
+                // 对于本地玩家，使用localPlayer.hp
+                currentHp = localPlayer.hp || 0;
+            } else if (gameState.players[playerId]) {
+                // 对于其他玩家，从gameState获取
+                currentHp = gameState.players[playerId].hp || 0;
+            } else {
+                currentHp = 0;
+            }
+        }
         const maxHp = stats.hp || 1000;
+        
+        // 调试输出
+        if (isLocalPlayer) {
+            console.log(`[角色面板] 本地玩家 ${playerName}: currentHp=${currentHp}, maxHp=${maxHp}, localPlayer.hp=${localPlayer.hp}`);
+        }
         
         const playerCard = document.createElement('div');
         playerCard.style.cssText = 'background: rgba(102, 126, 234, 0.2); border: 2px solid #667eea; border-radius: 10px; padding: 20px;';

@@ -6,6 +6,118 @@
     <title>房间大厅</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        /* 自定义下拉框样式 */
+        .custom-select-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .custom-select {
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            background-color: #fff;
+            cursor: pointer;
+            font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
+            color: #333;
+        }
+        
+        .custom-select:hover {
+            border-color: #999;
+        }
+        
+        .custom-select.open {
+            border-color: #4a9eff;
+        }
+        
+        .custom-select-display {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .custom-select-arrow {
+            margin-left: auto;
+            transition: transform 0.3s;
+        }
+        
+        .custom-select.open .custom-select-arrow {
+            transform: rotate(180deg);
+        }
+        
+        .custom-select-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 5px;
+            background-color: #fff;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .custom-select.open .custom-select-dropdown {
+            display: block;
+        }
+        
+        .custom-select-option {
+            padding: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: background-color 0.2s;
+        }
+        
+        .custom-select-option:hover {
+            background-color: #f0f0f0;
+        }
+        
+        .custom-select-option.selected {
+            background-color: #e3f2fd;
+        }
+        
+        .attribute-tag-inline {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+        }
+        
+        .attribute-tag-inline.physical {
+            background-color: #ffffff;
+            color: #000;
+            border: 1px solid #ccc;
+            text-shadow: none;
+        }
+        
+        .attribute-tag-inline.nature {
+            background-color: #00ffcc;
+        }
+        
+        .attribute-tag-inline.psychic {
+            background-color: #ff00ff;
+        }
+        
+        .attribute-tag-inline.none {
+            background-color: #87ceeb;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -131,11 +243,11 @@
             <div class="form-group">
                 <label for="settingsMonster">怪物：</label>
                 <select id="settingsMonster">
-                    <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
-                    <option value="诗宝蕉形脸">诗宝蕉形脸</option>
-                    <option value="笛者蕉形脸">笛者蕉形脸</option>
-                    <option value="热辣蕉形脸">热辣蕉形脸</option>
-                    <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                    <option value="杂鱼蕉形脸" data-attribute="无属性">杂鱼蕉形脸</option>
+                    <option value="诗宝蕉形脸" data-attribute="自然系">诗宝蕉形脸</option>
+                    <option value="笛者蕉形脸" data-attribute="超能系">笛者蕉形脸</option>
+                    <option value="热辣蕉形脸" data-attribute="物理系">热辣蕉形脸</option>
+                    <option value="沙壁蕉形脸" data-attribute="自然系">沙壁蕉形脸</option>
                 </select>
             </div>
             <div class="button-group">
@@ -171,11 +283,11 @@
             <div class="form-group">
                 <label for="modalMonsterSelect">选择怪物：</label>
                 <select id="modalMonsterSelect">
-                    <option value="杂鱼蕉形脸">杂鱼蕉形脸</option>
-                    <option value="诗宝蕉形脸">诗宝蕉形脸</option>
-                    <option value="笛者蕉形脸">笛者蕉形脸</option>
-                    <option value="热辣蕉形脸">热辣蕉形脸</option>
-                    <option value="沙壁蕉形脸">沙壁蕉形脸</option>
+                    <option value="杂鱼蕉形脸" data-attribute="无属性">杂鱼蕉形脸</option>
+                    <option value="诗宝蕉形脸" data-attribute="自然系">诗宝蕉形脸</option>
+                    <option value="笛者蕉形脸" data-attribute="超能系">笛者蕉形脸</option>
+                    <option value="热辣蕉形脸" data-attribute="物理系">热辣蕉形脸</option>
+                    <option value="沙壁蕉形脸" data-attribute="自然系">沙壁蕉形脸</option>
                 </select>
             </div>
             <div class="button-group">
@@ -208,15 +320,19 @@
                 <img id="avatarPreview" src="" alt="角色形象">
                 <p id="avatarName">当前角色</p>
             </div>
+            <div id="attributeAdvantageHint" style="margin: 15px 0; padding: 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.1); display: none;">
+                <div style="font-weight: bold; margin-bottom: 5px; color: #333;">属性克制关系：</div>
+                <div id="attributeAdvantageText" style="color: #333; font-size: 14px;"></div>
+            </div>
             <div class="avatar-selectors">
                 <div class="selector-group">
                     <label>选择角色：</label>
                     <select id="characterSelect">
-                        <option value="公主蓉">公主蓉</option>
-                        <option value="王子栗">王子栗</option>
-                        <option value="幺幺俊羊羊">幺幺俊羊羊</option>
-                        <option value="勇者">勇者</option>
-                        <option value="星耀犊">星耀犊</option>
+                        <option value="公主蓉" data-attribute="自然系">公主蓉</option>
+                        <option value="王子栗" data-attribute="无属性">王子栗</option>
+                        <option value="幺幺俊羊羊" data-attribute="物理系">幺幺俊羊羊</option>
+                        <option value="勇者" data-attribute="物理系">勇者</option>
+                        <option value="星耀犊" data-attribute="超能系">星耀犊</option>
                     </select>
                 </div>
                 <div class="selector-group">
@@ -238,6 +354,17 @@
     <script>
         const ROOM_KEY = "{{ room_key }}";
         let PLAYER_NAME = "{{ player_name }}";
+        // 角色和敌人属性配置
+        window.characterAttributes = {{ character_attributes | tojson }};
+        window.enemyAttributes = {{ enemy_attributes | tojson }};
+        window.attributeAdvantage = {{ attribute_advantage | tojson }};
+        // 属性颜色配置（与伤害字体颜色一致）
+        window.attributeColors = {
+            '物理系': '#ffffff',      // 白色
+            '自然系': '#00ffcc',      // 青绿色
+            '超能系': '#ff00ff',      // 紫粉色
+            '无属性': '#87ceeb'       // 天蓝色
+        };
         
         console.log('=== 大厅页面加载 ===');
         console.log('房间密钥:', ROOM_KEY);

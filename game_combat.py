@@ -445,6 +445,7 @@ def check_bullet_enemy_collisions(room_key, rooms, socketio):
                 # 调试日志：服务器端接收到的伤害值
                 player_id = bullet.get('owner')
                 player_name = '未知'
+                character_name = '未知'  # 初始化character_name，避免未定义错误
                 if player_id and player_id in game_state['players']:
                     player = game_state['players'][player_id]
                     player_name = player.get('name', '未知')
@@ -818,8 +819,13 @@ def check_bullet_enemy_collisions(room_key, rooms, socketio):
                             
                             # 如果存在毒苹果，敌人进入中毒状态
                             if 'poison_apples' in game_state and len(game_state.get('poison_apples', {})) > 0:
-                                enemy['poisoned'] = True  # 标记为中毒状态
-                                print(f"🍎 敌人 {enemy['type']} 进入中毒状态")
+                                if not enemy.get('poisoned', False):
+                                    enemy['poisoned'] = True  # 标记为中毒状态
+                                    # 立即通知客户端敌人中毒状态
+                                    socketio.emit('enemy_poisoned', {
+                                        'enemyId': enemy['id']
+                                    }, room=room_key)
+                                    print(f"🍎 敌人 {enemy['type']} 进入中毒状态")
                 
                 # 如果是Q技能子弹，添加到已击中列表，但不移除子弹（穿透）
                 if is_q_skill:
@@ -1073,6 +1079,12 @@ def check_beam_collisions(room_key, rooms, socketio):
                 if is_crit:
                     crit_damage = player.get('critDamage', 1.5)
                     damage = int(damage * (1 + crit_damage))
+                
+                # 添加生命值上限10%的额外伤害
+                max_hp = player.get('maxHp', 1500)
+                hp_bonus_damage = int(max_hp * 0.1)
+                damage += hp_bonus_damage
+                print(f"🎵 星耀犊光束伤害: 基础={damage - hp_bonus_damage}, 生命值加成={hp_bonus_damage}({max_hp}*10%), 总计={damage}")
                 
                 # 计算属性克制伤害
                 attacker_attribute = '超能系'  # 星耀犊是超能系
@@ -2123,10 +2135,15 @@ def process_game_tick(room_key, rooms, socketio, check_game_over):
                 
                 # 移除毒苹果，清除所有敌人的中毒状态
                 for enemy in game_state.get('enemies', []):
-                    enemy['poisoned'] = False
+                    if enemy.get('poisoned', False):
+                        enemy['poisoned'] = False
+                        # 通知客户端清除该敌人的中毒状态
+                        socketio.emit('enemy_poison_cleared', {
+                            'enemyId': enemy.get('id')
+                        }, room=room_key)
                 
                 del game_state['poison_apples'][apple_id]
-                print(f"🍎 毒苹果爆炸: {apple_id}, 伤害: {explosion_damage}")
+                print(f"🍎 毒苹果爆炸: {apple_id}, 伤害: {explosion_damage}, 已清除所有敌人中毒状态")
             else:
                 # 处理中毒状态（每0.3秒造成伤害）
                 poison_interval = 0.3
@@ -2135,12 +2152,48 @@ def process_game_tick(room_key, rooms, socketio, check_game_over):
                 
                 if current_time - apple['poison_last_damage_time'] >= poison_interval:
                     apple['poison_last_damage_time'] = current_time
-                    poison_damage = 300 + apple.get('owner_attack', 0)
-                    
+                    # 优先使用毒苹果保存的owner_attack，如果没有则从玩家数据获取
                     owner_id = apple.get('owner')
                     owner_player = None
+                    owner_attack = apple.get('owner_attack', 0)
+                    
+                    print(f"🍎 [中毒伤害计算] 毒苹果 {apple_id}: 初始owner_attack={owner_attack}")
+                    
                     if owner_id and owner_id in game_state['players']:
                         owner_player = game_state['players'][owner_id]
+                        # 始终从玩家数据获取最新的attack值（确保刷新后伤害正确）
+                        current_attack = owner_player.get('attack', 0)
+                        damage_bonus = owner_player.get('damageBonus', 0.0)
+                        
+                        print(f"🍎 [中毒伤害计算] 玩家 {owner_id}: current_attack={current_attack}, damageBonus={damage_bonus}")
+                        
+                        if current_attack > 0:
+                            owner_attack = current_attack
+                            apple['owner_attack'] = owner_attack  # 更新毒苹果的owner_attack
+                            print(f"🍎 [中毒伤害计算] 更新owner_attack: {owner_attack}")
+                        elif owner_attack == 0:
+                            # 如果都没有，使用0
+                            owner_attack = 0
+                            print(f"🍎 [中毒伤害计算] owner_attack保持为0")
+                    else:
+                        # 如果找不到玩家，使用保存的owner_attack和damageBonus
+                        print(f"🍎 [中毒伤害计算] 警告: 玩家 {owner_id} 不存在，使用保存的值")
+                        # 尝试从毒苹果中获取保存的damageBonus
+                        saved_damage_bonus = apple.get('owner_damage_bonus', 0.0)
+                        if owner_attack > 0:
+                            print(f"🍎 [中毒伤害计算] 使用保存的owner_attack: {owner_attack}, damageBonus: {saved_damage_bonus}")
+                            # 创建一个临时的owner_player对象用于应用伤害加成
+                            owner_player = {
+                                'attack': owner_attack,
+                                'damageBonus': saved_damage_bonus
+                            }
+                        else:
+                            print(f"🍎 [中毒伤害计算] 无法找到玩家且owner_attack为0，使用默认值")
+                            owner_attack = 0
+                            owner_player = None
+                    
+                    poison_damage = 300 + owner_attack
+                    print(f"🍎 [中毒伤害计算] 基础中毒伤害: 300 + {owner_attack} = {poison_damage}")
                     
                     # 对所有中毒的敌人造成伤害
                     for enemy in game_state.get('enemies', []):
@@ -2149,31 +2202,49 @@ def process_game_tick(room_key, rooms, socketio, check_game_over):
                         
                         # 检查敌人是否中毒（被苹果子弹击中过）
                         if enemy.get('poisoned', False):
-                            # 计算最终伤害（考虑属性克制）
+                            # 中毒伤害：无属性伤害，不可暴击，但可以受到伤害加成
                             final_damage = poison_damage
+                            
                             if owner_player:
-                                attacker_attribute = owner_player.get('attribute', '无属性')
-                                defender_attribute = enemy.get('attribute', '无属性')
-                                attacker_attribute_power = owner_player.get('attributePower', 0)
+                                # 应用伤害加成（但不考虑属性克制）
+                                damage_bonus = owner_player.get('damageBonus', 0.0)
                                 
-                                final_damage, is_advantage = calculate_attribute_damage(
-                                    poison_damage, attacker_attribute, defender_attribute, attacker_attribute_power
-                                )
-                                final_damage = int(final_damage)
-                                if final_damage < 1:
-                                    final_damage = 1
+                                # 检查是否有护盾的伤害加成（幺幺俊羊羊护盾）
+                                current_time_check = time.time()
+                                bubble_shield_end = owner_player.get('bubble_shield_end', 0)
+                                if current_time_check < bubble_shield_end:
+                                    bubble_damage_bonus = owner_player.get('bubble_shield_damage_bonus', 0.0)
+                                    damage_bonus = damage_bonus + bubble_damage_bonus
+                                    print(f"🍎 [中毒伤害计算] 检测到护盾伤害加成: {bubble_damage_bonus}")
+                                
+                                print(f"🍎 [中毒伤害计算] 敌人 {enemy.get('id')}: 基础伤害={final_damage}, 总伤害加成={damage_bonus}")
+                                
+                                if damage_bonus > 0:
+                                    final_damage = int(final_damage * (1 + damage_bonus))
+                                    print(f"🍎 [中毒伤害计算] 应用伤害加成后: {final_damage}")
+                                else:
+                                    print(f"🍎 [中毒伤害计算] 无伤害加成，保持原伤害: {final_damage}")
+                            else:
+                                print(f"🍎 [中毒伤害计算] 警告: owner_player为None，无法应用伤害加成")
+                            
+                            final_damage = int(final_damage)
+                            if final_damage < 1:
+                                final_damage = 1
+                            
+                            print(f"🍎 [中毒伤害计算] 最终伤害: {final_damage} (敌人 {enemy.get('id')})")
                             
                             enemy['hp'] = max(0, enemy['hp'] - final_damage)
                             enemy['hit_flash_end'] = current_time + 0.2
                             
-                            # 发送伤害数字事件
+                            # 发送伤害数字事件（无属性，蓝色字体，不可暴击）
                             socketio.emit('enemy_hit', {
                                 'enemyId': enemy['id'],
                                 'x': enemy['x'],
                                 'y': enemy['y'],
                                 'damage': final_damage,
                                 'isCrit': False,
-                                'attribute': owner_player.get('attribute', '无属性') if owner_player else '无属性'
+                                'attribute': '无属性',  # 中毒伤害始终为无属性
+                                'isPoison': True  # 标记为中毒伤害
                             }, room=room_key)
                             
                             if enemy['hp'] <= 0:
