@@ -123,12 +123,12 @@
           },
           {
             "name": "攻击力",
-            "value": 0.056737018890568716,
+            "value": 0.11639212463680647,
             "type": "percent",
-            "upgradeCount": 0
+            "upgradeCount": 1
           }
         ],
-        "level": 0
+        "level": 1
       },
       {
         "id": "equip_1763186313368_1319",
@@ -225,14 +225,864 @@
           }
         ],
         "level": 0
+      },
+      {
+        "id": "equip_1763205255947_6989",
+        "name": "虹气结",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "accessory",
+        "mainStat": {
+          "name": "生命值",
+          "value": 0.25,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "攻击力",
+            "value": 0.06442171204328827,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "属性强度",
+            "value": 7,
+            "type": "flat",
+            "upgradeCount": 0
+          },
+          {
+            "name": "换弹减免",
+            "value": 0.0959667999151757,
+            "type": "time",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205255948_3975",
+        "name": "胡桃藤",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "属性强度",
+          "value": 50,
+          "type": "flat"
+        },
+        "subStats": [
+          {
+            "name": "生命值",
+            "value": 0.07729575009720285,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.06666836685841332,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "攻击力",
+            "value": 0.055566284988065796,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205272579_8598",
+        "name": "量天尺",
+        "set": "世间真理的传授者",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "额外弹容",
+          "value": 0.2,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "暴击率",
+            "value": 0.04122850107284659,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "攻击力",
+            "value": 0.08997399735248111,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.04354314672997768,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205272579_1819",
+        "name": "虹气结",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "accessory",
+        "mainStat": {
+          "name": "属性强度",
+          "value": 50,
+          "type": "flat"
+        },
+        "subStats": [
+          {
+            "name": "攻击力",
+            "value": 0.050734210836996176,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.0734792712309836,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击率",
+            "value": 0.026347097317594555,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205285849_1503",
+        "name": "黑色面膜",
+        "set": "黑色狭窄的小巷",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "生命值",
+          "value": 0.25,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "换弹减免",
+            "value": 0.07728140096421983,
+            "type": "time",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击率",
+            "value": 0.04628117462540834,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "属性强度",
+            "value": 10,
+            "type": "flat",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205285850_4484",
+        "name": "采访麦克风",
+        "set": "黑色狭窄的小巷",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "暴击率",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "攻击力",
+            "value": 0.09898447254034226,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.09843516014731836,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.05204687467054188,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205285850_3661",
+        "name": "寂明灯",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "攻击力",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "暴击率",
+            "value": 0.049880927866287214,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.0841682357603698,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "属性强度",
+            "value": 9,
+            "type": "flat",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205285850_9689",
+        "name": "拂尘巾",
+        "set": "世间真理的传授者",
+        "slot": "accessory",
+        "mainStat": {
+          "name": "攻击力",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "生命值",
+            "value": 0.06835389710463623,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.052308823496549695,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "属性强度",
+            "value": 5,
+            "type": "flat",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205285850_5699",
+        "name": "黑色面膜",
+        "set": "黑色狭窄的小巷",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "换弹减免",
+          "value": 0.25,
+          "type": "time"
+        },
+        "subStats": [
+          {
+            "name": "属性强度",
+            "value": 6,
+            "type": "flat",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击率",
+            "value": 0.029896281188233106,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.07775038830929062,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
       }
     ],
-    "weapons": [],
-    "refinement_material": 45,
-    "wish_ticket": 25,
+    "weapons": [
+      {
+        "id": "weapon_1763205255947_2670",
+        "name": "毒苹果汁",
+        "star": 4
+      },
+      {
+        "id": "weapon_1763205255947_5258",
+        "name": "海蓝贤者",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205255948_1056",
+        "name": "精致冲锋枪",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205255948_1470",
+        "name": "玩具水枪",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205272579_9354",
+        "name": "伪消防火炮",
+        "star": 4
+      },
+      {
+        "id": "weapon_1763205272579_8418",
+        "name": "精致左轮",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205272579_3084",
+        "name": "星月断念天",
+        "star": 4
+      },
+      {
+        "id": "weapon_1763205272580_7450",
+        "name": "轰鸣炮-救星临",
+        "star": 5
+      },
+      {
+        "id": "weapon_1763205285850_2079",
+        "name": "海蓝先锋",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205285850_4504",
+        "name": "无限放射波",
+        "star": 4
+      }
+    ],
+    "refinement_material": 94,
+    "wish_ticket": 11,
     "last_login_date": "2025-11-15",
-    "gacha_pity_4star": 0,
-    "gacha_pity_5star": 0,
+    "gacha_pity_4star": 4,
+    "gacha_pity_5star": 13,
+    "has_received_welcome_reward": true
+  },
+  "admin": {
+    "password": "GQcRezBYgU9UTE",
+    "created_at": 1763203831.6466727,
+    "characters": {
+      "公主蓉": {
+        "equipment": {
+          "weapon": "equip_1763203835538_9642",
+          "accessory": "equip_1763203831646_5608",
+          "headwear": "equip_1763205300187_6642"
+        },
+        "stats": {
+          "attack": 32,
+          "critRate": 0.0,
+          "critDamage": 1.0,
+          "reloadReduction": 0.0,
+          "rapidFire": 0.0,
+          "extraAmmo": 0.0,
+          "attributePower": 0,
+          "hp": 2000,
+          "healingBonus": 0.2,
+          "damageBonus": 0.2
+        },
+        "attribute": "自然系"
+      },
+      "王子栗": {
+        "equipment": {
+          "weapon": "equip_1763205254359_5632",
+          "accessory": null,
+          "headwear": null
+        },
+        "stats": {
+          "attack": 49,
+          "critRate": 0.5,
+          "critDamage": 1.0,
+          "reloadReduction": 0.0,
+          "rapidFire": 0.0,
+          "extraAmmo": 0.0,
+          "attributePower": 0,
+          "hp": 1000
+        },
+        "attribute": "无属性"
+      },
+      "幺幺俊羊羊": {
+        "equipment": {
+          "weapon": "equip_1763203831646_9556",
+          "accessory": null,
+          "headwear": null
+        },
+        "stats": {
+          "attack": 48,
+          "critRate": 0.15,
+          "critDamage": 1.0,
+          "reloadReduction": 0.0,
+          "rapidFire": 0.0,
+          "extraAmmo": 0.0,
+          "attributePower": 100,
+          "hp": 1200,
+          "damageBonus": 0.2
+        },
+        "attribute": "物理系"
+      },
+      "勇者": {
+        "equipment": {
+          "weapon": "equip_1763205300187_5691",
+          "accessory": null,
+          "headwear": null
+        },
+        "stats": {
+          "attack": 53,
+          "critRate": 0.2,
+          "critDamage": 1.0,
+          "reloadReduction": 0.2,
+          "rapidFire": 0.0,
+          "extraAmmo": 0.0,
+          "attributePower": 100,
+          "hp": 1000
+        },
+        "attribute": "物理系"
+      },
+      "星耀犊": {
+        "equipment": {
+          "weapon": null,
+          "accessory": null,
+          "headwear": null
+        },
+        "stats": {
+          "attack": 0,
+          "critRate": 0.3,
+          "critDamage": 1.5,
+          "reloadReduction": 0.0,
+          "rapidFire": 0.0,
+          "extraAmmo": 0.0,
+          "attributePower": 0,
+          "hp": 1500
+        },
+        "attribute": "超能系"
+      }
+    },
+    "equipment": [
+      {
+        "id": "equip_1763203831646_9556",
+        "name": "量天尺",
+        "set": "世间真理的传授者",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "生命值",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "暴击率",
+            "value": 0.08057491972147943,
+            "type": "percent",
+            "upgradeCount": 1
+          },
+          {
+            "name": "攻击力",
+            "value": 0.23462482189961814,
+            "type": "percent",
+            "upgradeCount": 2
+          },
+          {
+            "name": "换弹减免",
+            "value": 0.2194277295126519,
+            "type": "time",
+            "upgradeCount": 2
+          }
+        ],
+        "level": 5
+      },
+      {
+        "id": "equip_1763203831646_5608",
+        "name": "虹气结",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "accessory",
+        "mainStat": {
+          "name": "治疗加成",
+          "value": 0.2,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "暴击伤害",
+            "value": 0.09133523707130524,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击率",
+            "value": 0.047258643363522944,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "换弹减免",
+            "value": 0.06023509074911819,
+            "type": "time",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763203831646_6996",
+        "name": "胡桃藤",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "生命值",
+          "value": 0.25,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "暴击率",
+            "value": 0.02513977342008917,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "攻击力",
+            "value": 0.09210037307809261,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "换弹减免",
+            "value": 0.09943510037164244,
+            "type": "time",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763203835538_9642",
+        "name": "寂明灯",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "攻击力",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "属性强度",
+            "value": 5,
+            "type": "flat",
+            "upgradeCount": 0
+          },
+          {
+            "name": "换弹减免",
+            "value": 0.060855213406223616,
+            "type": "time",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.09283550938484467,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205254359_5632",
+        "name": "寂明灯",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "攻击力",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "暴击伤害",
+            "value": 0.06678143345990989,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击率",
+            "value": 0.042433715150266504,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "换弹减免",
+            "value": 0.09239853510081267,
+            "type": "time",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205300187_6642",
+        "name": "黑色面膜",
+        "set": "黑色狭窄的小巷",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "攻击力",
+          "value": 0.3,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "换弹减免",
+            "value": 0.0686387526661722,
+            "type": "time",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.0753391604258049,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击率",
+            "value": 0.04685549139712249,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205300187_5691",
+        "name": "量天尺",
+        "set": "世间真理的传授者",
+        "slot": "weapon",
+        "mainStat": {
+          "name": "暴击伤害",
+          "value": 0.6,
+          "type": "percent"
+        },
+        "subStats": [
+          {
+            "name": "生命值",
+            "value": 0.13138350649750352,
+            "type": "percent",
+            "upgradeCount": 1
+          },
+          {
+            "name": "属性强度",
+            "value": 34,
+            "type": "flat",
+            "upgradeCount": 3
+          },
+          {
+            "name": "攻击力",
+            "value": 0.169972555438476,
+            "type": "percent",
+            "upgradeCount": 1
+          }
+        ],
+        "level": 5
+      },
+      {
+        "id": "equip_1763205326554_5790",
+        "name": "胡桃藤",
+        "set": "愿这一轮朝阳照亮明天",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "属性强度",
+          "value": 50,
+          "type": "flat"
+        },
+        "subStats": [
+          {
+            "name": "暴击率",
+            "value": 0.039851323828922626,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "攻击力",
+            "value": 0.084428388873166,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.063224422753319,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205326554_8719",
+        "name": "黑色面膜",
+        "set": "黑色狭窄的小巷",
+        "slot": "headwear",
+        "mainStat": {
+          "name": "快速射击",
+          "value": 0.2,
+          "type": "time"
+        },
+        "subStats": [
+          {
+            "name": "属性强度",
+            "value": 9,
+            "type": "flat",
+            "upgradeCount": 0
+          },
+          {
+            "name": "攻击力",
+            "value": 0.09491374868011451,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.04544451493666548,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205543880_5236",
+        "name": "拂尘巾",
+        "set": "世间真理的传授者",
+        "slot": "accessory",
+        "mainStat": {
+          "name": "属性强度",
+          "value": 50,
+          "type": "flat"
+        },
+        "subStats": [
+          {
+            "name": "攻击力",
+            "value": 0.08556795657023543,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.07580438949269765,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.07819822692549974,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      },
+      {
+        "id": "equip_1763205544227_4167",
+        "name": "拂尘巾",
+        "set": "世间真理的传授者",
+        "slot": "accessory",
+        "mainStat": {
+          "name": "属性强度",
+          "value": 50,
+          "type": "flat"
+        },
+        "subStats": [
+          {
+            "name": "攻击力",
+            "value": 0.0760040892645042,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "生命值",
+            "value": 0.049635299169181704,
+            "type": "percent",
+            "upgradeCount": 0
+          },
+          {
+            "name": "暴击伤害",
+            "value": 0.05419206528245163,
+            "type": "percent",
+            "upgradeCount": 0
+          }
+        ],
+        "level": 0
+      }
+    ],
+    "weapons": [
+      {
+        "id": "weapon_1763205254358_5587",
+        "name": "海蓝舞者",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205254358_6576",
+        "name": "星月断念天",
+        "star": 4
+      },
+      {
+        "id": "weapon_1763205254359_3098",
+        "name": "海蓝斗士",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205254359_6433",
+        "name": "红富士",
+        "star": 5
+      },
+      {
+        "id": "weapon_1763205300187_1183",
+        "name": "万世封卷系列",
+        "star": 5
+      },
+      {
+        "id": "weapon_1763205300187_5863",
+        "name": "毒苹果汁",
+        "star": 4
+      },
+      {
+        "id": "weapon_1763205326554_7175",
+        "name": "精致左轮",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205326555_2020",
+        "name": "破烂法书",
+        "star": 3
+      },
+      {
+        "id": "weapon_1763205326555_3779",
+        "name": "伪消防火炮",
+        "star": 4
+      },
+      {
+        "id": "weapon_1763205544398_6612",
+        "name": "海蓝贤者",
+        "star": 3
+      }
+    ],
+    "refinement_material": 78,
+    "wish_ticket": 5,
+    "last_login_date": "2025-11-15",
+    "gacha_pity_4star": 5,
+    "gacha_pity_5star": 22,
     "has_received_welcome_reward": true
   }
 }
