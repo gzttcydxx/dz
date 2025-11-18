@@ -1,0 +1,1 @@
+"""Domain package containing OOP abstractions for characters, equipment and weapons."""
