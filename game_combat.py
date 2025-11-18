@@ -9,29 +9,14 @@ import json
 import os
 from flask_socketio import emit
 
-# 用户数据文件路径（与main.py保持一致）
-USER_DATA_FILE = 'user_data.json'
+from db import load_all_users, save_all_users, init_db
+init_db()
 
 def load_user_data():
-    """从文件加载用户数据"""
-    if os.path.exists(USER_DATA_FILE):
-        try:
-            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"加载用户数据失败: {e}")
-            return {}
-    return {}
+    return load_all_users()
 
 def save_user_data(data):
-    """保存用户数据到文件"""
-    try:
-        with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception as e:
-        print(f"保存用户数据失败: {e}")
-        return False
+    return save_all_users(data)
 
 # 敌人配置
 ENEMY_CONFIG = {

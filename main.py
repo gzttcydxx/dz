@@ -41,8 +41,11 @@ def _removed_route(*args, **kwargs):
         return f
     return decorator
 
-# 用户数据文件路径
 USER_DATA_FILE = 'user_data.json'
+
+# 数据库初始化
+from db import init_db, load_all_users, save_all_users
+init_db()
 
 # 抽卡日志文件路径
 GACHA_LOG_FILE = 'gacha_log.txt'
@@ -71,11 +74,7 @@ CHARACTER_ATTRIBUTES = {
     '王子栗': '无属性'
 }
 
-from domain.equipment_config import EQUIPMENT_SETS
-
-from domain.equipment_config import EQUIPMENT_MAIN_STATS
-
-from domain.equipment_config import EQUIPMENT_SUB_STATS
+from domain.equipment_config import EQUIPMENT_SETS, EQUIPMENT_MAIN_STATS, EQUIPMENT_SUB_STATS
 
 # 武器配置
 WEAPONS = {
@@ -213,29 +212,6 @@ CHARACTER_SKILLS = {
         }
     }
 }
-
-# 加载用户数据
-def load_user_data():
-    """从文件加载用户数据"""
-    if os.path.exists(USER_DATA_FILE):
-        try:
-            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"加载用户数据失败: {e}")
-            return {}
-    return {}
-
-# 保存用户数据
-def save_user_data(data):
-    """保存用户数据到文件"""
-    try:
-        with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception as e:
-        print(f"保存用户数据失败: {e}")
-        return False
 
 # 检测套装
 def detect_set_bonus(equipment_dict, all_equipment):
@@ -438,7 +414,7 @@ def calculate_equipment_stats_server(base_stats, equipment_dict, all_equipment, 
     return stats
 
 # 初始化用户数据
-users = load_user_data()
+users = load_all_users()
 
 # 初始化新用户的角色数据
 def generate_random_equipment():
@@ -599,14 +575,14 @@ def index():
     # 如果已登录，加载用户角色数据
     user_characters = None
     if is_logged_in:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'characters' in users[username]:
             user_characters = users[username]['characters']
         else:
             # 如果没有角色数据，初始化
             if username in users:
                 users[username]['characters'] = init_user_characters()
-                save_user_data(users)
+                save_all_users(users)
                 user_characters = users[username]['characters']
     
     # 如果已登录，加载用户装备和道具
@@ -614,7 +590,7 @@ def index():
     refinement_material = 0
     wish_ticket = 0
     if is_logged_in:
-        users = load_user_data()
+        users = load_all_users()
         if username in users:
             if 'equipment' in users[username]:
                 user_equipment = users[username]['equipment']
@@ -624,7 +600,7 @@ def index():
     # 如果已登录，加载用户武器
     user_weapons = []
     if is_logged_in:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'weapons' in users[username]:
             user_weapons = users[username]['weapons']
     
@@ -656,7 +632,7 @@ def register():
         return redirect(url_for('index'))
     
     # 重新加载用户数据（防止并发问题）
-    users = load_user_data()
+    users = load_all_users()
     
     if username in users:
         flash('用户名已存在', 'error')
@@ -690,7 +666,7 @@ def register():
     }
     
     # 保存到文件
-    if save_user_data(users):
+    if save_all_users(users):
         flash('注册成功，请登录', 'success')
     else:
         flash('注册失败，请重试', 'error')
@@ -708,7 +684,7 @@ def login():
         return redirect(url_for('index'))
     
     # 重新加载用户数据
-    users = load_user_data()
+    users = load_all_users()
     
     if username not in users:
         flash('用户名或密码错误', 'error')
@@ -721,12 +697,12 @@ def login():
     # 如果用户没有角色数据，初始化
     if 'characters' not in users[username]:
         users[username]['characters'] = init_user_characters()
-        save_user_data(users)
+        save_all_users(users)
     
     # 如果用户没有装备数据，初始化为空列表
     if 'equipment' not in users[username]:
         users[username]['equipment'] = []
-        save_user_data(users)
+        save_all_users(users)
     
     # 初始化武器数据（如果不存在）
     if 'weapons' not in users[username]:
@@ -752,7 +728,7 @@ def login():
         users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 30
         users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 20
         users[username]['has_received_welcome_reward'] = True
-        save_user_data(users)
+        save_all_users(users)
         flash(f'欢迎奖励：获得30个叠志精心料和20个神兵许愿单！', 'success')
     
     # 检查每日首次登录奖励
@@ -771,7 +747,7 @@ def login():
         users[username]['equipment'].append(random_equipment)
         
         users[username]['last_login_date'] = today
-        save_user_data(users)
+        save_all_users(users)
         flash(f'每日登录奖励：获得15个叠志精心料、5个神兵许愿单和1件随机装备！', 'success')
     
     # 登录成功，设置session
@@ -944,7 +920,7 @@ def game(room_key):
     # 获取用户角色数据（包含装备和被动技能加成）
     user_character_data = None
     if username:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'characters' in users[username]:
             character_name = player_avatar.get('character', '勇者')
             if character_name in users[username]['characters']:
@@ -1553,7 +1529,7 @@ def handle_join_game(data):
         username = session.get('user_id')
         player['username'] = username  # 更新用户名
         if username:
-            users = load_user_data()
+            users = load_all_users()
             if username in users and 'characters' in users[username]:
                 character_name = avatar.get('character', '勇者')
                 if character_name in users[username]['characters']:
@@ -1675,7 +1651,7 @@ def handle_join_game(data):
         username = session.get('user_id')
         character_name = avatar.get('character', '勇者')
         if username:
-            users = load_user_data()
+            users = load_all_users()
             if username in users and 'characters' in users[username]:
                 if character_name in users[username]['characters']:
                     char_data = users[username]['characters'][character_name]
@@ -1773,7 +1749,7 @@ def handle_join_game(data):
     attribute_power = 0  # 默认属性强度
     username = session.get('user_id')
     if username:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'characters' in users[username]:
             if character_name in users[username]['characters']:
                 char_data = users[username]['characters'][character_name]
@@ -1800,7 +1776,7 @@ def handle_join_game(data):
     # 获取完整的最终属性（用于存储到玩家数据中）
     final_stats_for_player = {}
     if username:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'characters' in users[username]:
             character_name = avatar.get('character', '勇者')
             if character_name in users[username]['characters']:
@@ -2785,7 +2761,7 @@ def handle_request_team_stats(data):
         return
     
     room = rooms[room_key]
-    users = load_user_data()
+    users = load_all_users()
     
     # 获取房间内所有玩家的角色数据
     team_stats = {}
@@ -3023,7 +2999,7 @@ def equip_character():
     if not character or not slot:
         return json.dumps({'success': False, 'message': '参数错误'}), 400, {'Content-Type': 'application/json'}
     
-    users = load_user_data()
+    users = load_all_users()
     if username not in users:
         return json.dumps({'success': False, 'message': '用户不存在'}), 404, {'Content-Type': 'application/json'}
     
@@ -3061,7 +3037,7 @@ def equip_character():
     user_data['characters'][character]['equipment'][slot] = equipment_id
     
     # 保存数据
-    if save_user_data(users):
+    if save_all_users(users):
         return json.dumps({'success': True, 'message': '装备成功'}), 200, {'Content-Type': 'application/json'}
     else:
         return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
@@ -3080,7 +3056,7 @@ def upgrade_equipment():
         return json.dumps({'success': False, 'message': '装备ID不能为空'}), 400, {'Content-Type': 'application/json'}
     
     # 加载用户数据
-    users = load_user_data()
+    users = load_all_users()
     
     if username not in users or 'equipment' not in users[username]:
         return json.dumps({'success': False, 'message': '用户数据不存在'}), 404, {'Content-Type': 'application/json'}
@@ -3174,7 +3150,7 @@ def upgrade_equipment():
     users[username]['equipment'] = equipment_list
     
     # 保存用户数据
-    if save_user_data(users):
+    if save_all_users(users):
         return json.dumps({
             'success': True,
             'equipment': equipment,
@@ -3196,7 +3172,7 @@ def gacha_page():
         return redirect(url_for('index'))
     
     username = session.get('username')
-    users = load_user_data()
+    users = load_all_users()
     
     if username not in users:
         flash('用户不存在', 'error')
@@ -3426,7 +3402,7 @@ def gacha_draw():
     if count not in [1, 10]:
         return json.dumps({'success': False, 'message': '无效的抽卡数量'}), 400, {'Content-Type': 'application/json'}
     
-    users = load_user_data()
+    users = load_all_users()
     
     if username not in users:
         return json.dumps({'success': False, 'message': '用户不存在'}), 404, {'Content-Type': 'application/json'}
@@ -3443,7 +3419,7 @@ def gacha_draw():
     results = perform_gacha(users, username, count)
     
     # 保存数据
-    if save_user_data(users):
+    if save_all_users(users):
         return json.dumps({
             'success': True,
             'results': results,

@@ -106,6 +106,26 @@ d:\对抗影渊\
 └── README_GAME.md        # 本文件
 ```
 
+## 数据库结构（SQLite）
+- 表 `users`：`username`(PK), `password`, `created_at`, `last_login_date`, `gacha_pity_4star`, `gacha_pity_5star`, `refinement_material`, `wish_ticket`, `has_received_welcome_reward`
+- 表 `characters`：复合主键(`user_username`,`name`)，面板字段（`attack`,`critRate`,`critDamage`,`reloadReduction`,`rapidFire`,`extraAmmo`,`attributePower`,`hp`,`healingBonus`,`damageBonus`），`attribute`，以及已装备的 `equipped_weapon_id`、`equipped_accessory_id`、`equipped_headwear_id`
+- 表 `equipment`：`id`(PK), `user_username`(FK->users), `name`, `set_name`, `slot`, `level`, 主词条：`main_stat_name`,`main_stat_value`,`main_stat_type`
+- 表 `equipment_substats`：自增主键 `id`，`equipment_id`(FK->equipment)，`name`,`value`,`type`,`upgrade_count`
+- 表 `weapons`：`id`(PK), `user_username`(FK->users), `name`, `star`
+- 索引：`idx_characters_user`、`idx_equipment_user`、`idx_equipment_slot_user`、`idx_substats_equipment`、`idx_weapons_user`
+
+## 迁移与初始化
+- 首次运行时会自动尝试从 `user_data.json` 导入到 SQLite。
+- 可手动运行 `python3 migrate_to_sqlite.py` 强制导入。
+
+## API 变更
+- 所有读取/写入用户数据的函数已切换为数据库实现，接口不变：`load_user_data()`、`save_user_data()`。
+- 装备相关接口使用数据库原子操作：角色佩戴接口与强化接口。
+
+## 维护与备份
+- 备份文件：`user_data.sqlite3`，建议定期复制该文件进行备份。
+- 外键开启，级联删除用户后，其装备/角色/武器会同步清理。
+
 ## 如何添加地图图片
 
 1. 准备PNG或JPG格式的地图背景图片

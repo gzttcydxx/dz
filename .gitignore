@@ -3,3 +3,4 @@ gacha_log.txt
 __pycache__/
 *.pyc
 *.db
+*.sqlite3
