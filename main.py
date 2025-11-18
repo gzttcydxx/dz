@@ -33,8 +33,13 @@ socketio = SocketIO(
     ping_interval=25  # ping间隔
 )
 
-# 存储所有房间信息
-rooms = {}
+# 存储所有房间信息（全局状态模块）
+from state import rooms
+
+def _removed_route(*args, **kwargs):
+    def decorator(f):
+        return f
+    return decorator
 
 # 用户数据文件路径
 USER_DATA_FILE = 'user_data.json'
@@ -648,7 +653,7 @@ def random_character():
     color = random.choice(COLOR_VARIANTS)
     return {'character': character, 'color': color}
 
-@app.route('/')
+@_removed_route('/')
 def index():
     """主界面"""
     # 检查登录状态
@@ -704,7 +709,7 @@ def index():
                          character_attributes=CHARACTER_ATTRIBUTES,
                          enemy_attributes=enemy_attributes)
 
-@app.route('/register', methods=['POST'])
+@_removed_route('/register', methods=['POST'])
 def register():
     """注册账号"""
     username = request.form.get('username', '').strip()
@@ -756,7 +761,7 @@ def register():
     
     return redirect(url_for('index'))
 
-@app.route('/login', methods=['POST'])
+@_removed_route('/login', methods=['POST'])
 def login():
     """登录"""
     username = request.form.get('username', '').strip()
@@ -842,14 +847,14 @@ def login():
     flash('登录成功', 'success')
     return redirect(url_for('index'))
 
-@app.route('/logout')
+@_removed_route('/logout')
 def logout():
     """登出"""
     session.clear()
     flash('已登出', 'info')
     return redirect(url_for('index'))
 
-@app.route('/create_room', methods=['POST'])
+@_removed_route('/create_room', methods=['POST'])
 def create_room():
     """创建房间"""
     # 检查登录状态
@@ -924,7 +929,7 @@ def create_room():
     # 重定向到大厅
     return redirect(f'/lobby/{room_key}')
 
-@app.route('/lobby/<room_key>')
+@_removed_route('/lobby/<room_key>')
 def lobby(room_key):
     """大厅界面"""
     print(f"\n{'='*60}")
@@ -970,7 +975,7 @@ def lobby(room_key):
                          enemy_attributes=enemy_attributes,
                          attribute_advantage=ATTRIBUTE_ADVANTAGE)
 
-@app.route('/game/<room_key>')
+@_removed_route('/game/<room_key>')
 def game(room_key):
     """游戏界面"""
     print(f"\n{'='*60}")
@@ -1038,7 +1043,7 @@ def game(room_key):
                          monster_type=room['monster'],
                          user_character_data=user_character_data)
 
-@app.route('/join_room', methods=['POST'])
+@_removed_route('/join_room', methods=['POST'])
 def join_room_http():
     """通过HTTP POST加入房间"""
     # 检查登录状态
@@ -1119,10 +1124,15 @@ def handle_join_room_session(data):
     print(f"Session内容: {dict(session)}")
     
     if room_key not in rooms:
-        print(f"❌ 错误：房间不存在")
-        print(f"{'='*60}\n")
-        emit('error', {'message': '房间不存在'})
-        return
+        session_room_key = session.get('room_key')
+        if session_room_key and session_room_key in rooms:
+            print(f"⚠ 房间密钥不一致，使用Session中的房间密钥: {session_room_key}")
+            room_key = session_room_key
+        else:
+            print(f"❌ 错误：房间不存在")
+            print(f"{'='*60}\n")
+            emit('error', {'message': '房间不存在'})
+            return
     
     room = rooms[room_key]
     print(f"✓ 房间信息:")
@@ -3062,7 +3072,7 @@ def can_start_game(room_key):
     
     return True
 
-@app.route('/equip_character', methods=['POST'])
+@_removed_route('/equip_character', methods=['POST'])
 def equip_character():
     """为角色装备物品"""
     if 'user_id' not in session:
@@ -3120,7 +3130,7 @@ def equip_character():
     else:
         return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
 
-@app.route('/upgrade_equipment', methods=['POST'])
+@_removed_route('/upgrade_equipment', methods=['POST'])
 def upgrade_equipment():
     """强化装备"""
     # 检查登录状态
@@ -3242,7 +3252,7 @@ def upgrade_equipment():
     else:
         return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
 
-@app.route('/gacha')
+@_removed_route('/gacha')
 def gacha_page():
     """抽卡页面"""
     if not session.get('user_id'):
@@ -3467,7 +3477,7 @@ def perform_gacha(users, username, count=1):
     
     return results
 
-@app.route('/gacha/draw', methods=['POST'])
+@_removed_route('/gacha/draw', methods=['POST'])
 def gacha_draw():
     """执行抽卡"""
     if not session.get('user_id'):
@@ -3508,6 +3518,17 @@ def gacha_draw():
         }, ensure_ascii=False), 200, {'Content-Type': 'application/json'}
     else:
         return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}
+
+from routes import main_bp, auth_bp, room_bp, equipment_bp, gacha_bp
+app.register_blueprint(main_bp)
+app.register_blueprint(auth_bp)
+app.register_blueprint(room_bp)
+app.register_blueprint(equipment_bp)
+app.register_blueprint(gacha_bp)
+
+# 保持原有端点名称兼容
+from routes.main_routes import index as main_index
+app.add_url_rule('/', endpoint='index', view_func=main_index)
 
 if __name__ == '__main__':
     # 生产环境：设置环境变量 DEBUG=False 来关闭调试模式
