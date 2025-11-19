@@ -7,14 +7,14 @@ gacha_bp = Blueprint('gacha', __name__)
 
 @gacha_bp.route('/gacha')
 def gacha_page():
-    from main import load_user_data
+    from db import load_all_users
     if not session.get('user_id'):
         from flask import redirect, url_for, flash
         flash('请先登录', 'error')
         return redirect(url_for('index'))
 
-    username = session.get('username')
-    users = load_user_data()
+    username = session.get('user_id')
+    users = load_all_users()
     if username not in users:
         from flask import redirect, url_for, flash
         flash('用户不存在', 'error')
@@ -34,7 +34,7 @@ def gacha_page():
                          pity_5star=pity_5star)
 
 def perform_gacha(users, username, count=1):
-    from main import log_gacha, generate_random_equipment, save_user_data, WEAPONS
+    from main import log_gacha, generate_random_equipment, WEAPONS
     results = []
     pity_4star = users[username].get('gacha_pity_4star', 0)
     pity_5star = users[username].get('gacha_pity_5star', 0)
@@ -158,17 +158,17 @@ def perform_gacha(users, username, count=1):
 
 @gacha_bp.route('/gacha/draw', methods=['POST'])
 def gacha_draw():
-    from main import load_user_data, save_user_data
+    from db import load_all_users, save_all_users
     if not session.get('user_id'):
         return json.dumps({'success': False, 'message': '请先登录'}), 401, {'Content-Type': 'application/json'}
 
-    username = session.get('username')
+    username = session.get('user_id')
     data = request.get_json()
     count = data.get('count', 1)
     if count not in [1, 10]:
         return json.dumps({'success': False, 'message': '无效的抽卡数量'}), 400, {'Content-Type': 'application/json'}
 
-    users = load_user_data()
+    users = load_all_users()
     if username not in users:
         return json.dumps({'success': False, 'message': '用户不存在'}), 404, {'Content-Type': 'application/json'}
 
@@ -178,7 +178,7 @@ def gacha_draw():
 
     users[username]['wish_ticket'] = wish_ticket - count
     results = perform_gacha(users, username, count)
-    if save_user_data(users):
+    if save_all_users(users):
         return json.dumps({'success': True,'results': results,'wish_ticket': users[username].get('wish_ticket', 0),'refinement_material': users[username].get('refinement_material', 0),'pity_4star': users[username].get('gacha_pity_4star', 0),'pity_5star': users[username].get('gacha_pity_5star', 0)}, ensure_ascii=False), 200, {'Content-Type': 'application/json'}
     else:
         return json.dumps({'success': False, 'message': '保存失败'}), 500, {'Content-Type': 'application/json'}

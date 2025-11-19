@@ -6,7 +6,6 @@ equipment_bp = Blueprint('equipment', __name__)
 
 @equipment_bp.route('/equip_character', methods=['POST'])
 def equip_character():
-    from main import load_user_data, save_user_data
     from db import set_character_equipment
 
     if 'user_id' not in session:
@@ -29,20 +28,19 @@ def equip_character():
 
 @equipment_bp.route('/upgrade_equipment', methods=['POST'])
 def upgrade_equipment():
-    from main import load_user_data, save_user_data
-    from db import upgrade_equipment_for_user
+    from db import upgrade_equipment_for_user, load_all_users
 
     if not session.get('user_id'):
         return json.dumps({'success': False, 'message': '请先登录'}), 401, {'Content-Type': 'application/json'}
 
-    username = session.get('username')
+    username = session.get('user_id')
     equipment_id = request.json.get('equipment_id')
     if not equipment_id:
         return json.dumps({'success': False, 'message': '装备ID不能为空'}), 400, {'Content-Type': 'application/json'}
 
     ok, result = upgrade_equipment_for_user(username, equipment_id)
     if ok:
-        user = load_user_data().get(username, {})
+        user = load_all_users().get(username, {})
         equipment = next((e for e in user.get('equipment', []) if e.get('id') == equipment_id), None)
         return json.dumps({'success': True,'equipment': equipment,'boosted_stat': result,'refinement_material': user.get('refinement_material', 0)}), 200, {'Content-Type': 'application/json'}
     else:

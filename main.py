@@ -36,8 +36,6 @@ socketio = SocketIO(
 # 存储所有房间信息（全局状态模块）
 from state import rooms
 
-USER_DATA_FILE = 'user_data.json'
-
 # 数据库初始化
 from db import init_db, load_all_users, save_all_users
 init_db()
@@ -57,7 +55,7 @@ def log_gacha(username, message):
         pass
 
 # 角色列表
-CHARACTERS = ['公主蓉', '王子栗', '幺幺俊羊羊', '勇者', '星耀犊']
+CHARACTERS = list(CHARACTER_CLASS_MAP.keys())
 COLOR_VARIANTS = [1, 2, 3]
 
 # 角色属性配置
@@ -70,6 +68,7 @@ CHARACTER_ATTRIBUTES = {
 }
 
 from domain.equipment_config import EQUIPMENT_SETS, EQUIPMENT_MAIN_STATS, EQUIPMENT_SUB_STATS
+from domain.characters import Character, CHARACTER_CLASS_MAP
 
 # 武器配置
 WEAPONS = {
@@ -84,128 +83,6 @@ WEAPONS = {
     5: [  # 五星武器
         '万世封卷系列', '轰鸣炮-救星临', '红富士', '圣堂加冕', '莎与礼的誓约'
     ]
-}
-
-# 角色技能说明
-CHARACTER_SKILLS = {
-    '勇者': {
-        '左键': {
-            'name': '左轮射击',
-            'description': '发射普通左轮子弹，伤害500+攻击力，射击间隔0.7秒，弹夹容量6发，换弹时间1.2秒',
-            'cooldown': '无'
-        },
-        'Q': {
-            'name': '击破射击',
-            'description': '发射一枚穿透性子弹，伤害3000+攻击力，大小比普通子弹大100%，可穿透敌人，碰到地图边界会向最近敌人弹射一次，被击中的敌人将被禁锢3秒。充能：每秒1%，每次普通子弹命中敌人+3%',
-            'cooldown': '充能制（100%）'
-        },
-        'E': {
-            'name': '强化射击',
-            'description': '激活后持续10秒，立即填满子弹。期间子弹可弹射一次，暴击率提高50%。冷却8秒',
-            'cooldown': '8秒'
-        },
-        '右键': {
-            'name': '快速连射',
-            'description': '将当前剩余的所有子弹一次性快速全部打出。子弹伤害为左键的70%。换弹时无法使用',
-            'cooldown': '无'
-        },
-        '被动': {
-            'name': '赏金猎人',
-            'description': '当暴击率超过100%时，根据超出的部分获得双倍的暴击伤害加成'
-        }
-    },
-    '公主蓉': {
-        '左键': {
-            'name': '四连发射击',
-            'description': '每次射击4发连续。每次4连发需要间隔1秒。每颗子弹造成50+（公主蓉生命值上限的5%）点伤害，若击中队友则造成20+（公主蓉生命值上限的1%）点治疗。子弹速度42，弹容60，换弹时间2.1秒',
-            'cooldown': '无'
-        },
-        'Q': {
-            'name': '微笑拂晓约定',
-            'description': '展开一个半径800的圆形光环，范围内的队友每秒恢复200点生命值，敌人每秒收到1000点伤害。持续期间内公主蓉为无敌状态。持续8秒。充能：每秒恢复5%',
-            'cooldown': '充能制（100%）'
-        },
-        'E': {
-            'name': '火力优化',
-            'description': '每次4连射改为8连射，连射射击间隔改为0.05秒（并非开枪的间隔）。持续8秒，冷却10秒',
-            'cooldown': '10秒'
-        },
-        '右键': {
-            'name': '锁定射击',
-            'description': '点击右键后进入激活状态，激活状态下会开始锁定界面上的所有队友和敌人，在1秒后完成锁定并向所有锁定目标都发射粉色桃心炮弹，被击中的敌人将收到800+（公主蓉生命值上限的10%）点伤害，队友获得100+（公主蓉生命值上限的1%）点治疗。冷却8秒',
-            'cooldown': '8秒'
-        }
-    },
-    '王子栗': {
-        '左键': {
-            'name': '火炮弹',
-            'description': '发射一枚火炮弹，击中敌人后会造成200+攻击力的命中伤害，然后爆炸，造成范围伤害，伤害为500+攻击力。发射间隔1.5秒，有后坐力，弹夹容量6发，换弹时间2.5秒',
-            'cooldown': '无'
-        },
-        'Q': {
-            'name': '再创世',
-            'description': '激活后，击碎屏幕并定格敌人，随后释放创世白光，对所有敌人造成5次伤害，每次伤害为1000+攻击力。充能：每秒3%，左键每次命中敌人时恢复2%',
-            'cooldown': '充能制（100%）'
-        },
-        'E': {
-            'name': '重生',
-            'description': '当任意队友阵亡时，会在原处留下一个黄色的灵魂球。存在灵魂球时，E技能变为可使用状态。按下E技能后，将该队友在灵魂球的位置复活。冷却20秒',
-            'cooldown': '20秒（需要灵魂球）'
-        },
-        '右键': {
-            'name': '净灭射线',
-            'description': '发射一道光束，持续0.6秒，对接触到光束的敌人造成1000+攻击力点伤害，有后坐力。冷却时间5秒',
-            'cooldown': '5秒'
-        },
-        '被动': {
-            'name': '救世主',
-            'description': '对物理/自然/超能属性的敌人造成伤害时，该伤害转变为克制敌人的属性'
-        }
-    },
-    '幺幺俊羊羊': {
-        '左键': {
-            'name': '你吃苹果不？',
-            'description': '发射苹果子弹，命中敌人时将击退敌人并造成800+（幺幺俊羊羊攻击力）点的伤害，命中队友时治疗40+（幺幺俊羊羊攻击力）点生命值。射击间隔1.5秒，弹容15，子弹速度为33，换弹时间1.78秒',
-            'cooldown': '无'
-        },
-        'Q': {
-            'name': '巨大苹果',
-            'description': '按下Q激活技能，在准星位置会出现巨大苹果的虚影。点击左键在虚影位置生成巨大苹果实体，点击右键取消。巨大苹果放置时弹开敌人并造成1000+（幺幺俊羊羊攻击力）点伤害，存在6秒，每秒对所有玩家治疗100+（幺幺俊羊羊攻击力）点生命值，6秒后爆炸对所有敌人造成5000+（幺幺俊羊羊攻击力）点伤害。充能：每秒1%，每次发射苹果击中敌人恢复5%',
-            'cooldown': '充能制（100%）'
-        },
-        'E': {
-            'name': '毒苹果',
-            'description': '按下E激活技能，在准星位置会出现毒苹果的虚影。点击左键在虚影位置生成毒苹果实体，点击右键取消。毒苹果使界面上的所有敌人移动速度降低20%，并且受到苹果子弹攻击后会进入中毒状态，每隔0.3秒受到300+（幺幺俊羊羊攻击力）点伤害。中毒效果持续到毒苹果消失。毒苹果持续8秒后爆炸，对所有敌人造成2000+（幺幺俊羊羊攻击力）点伤害。',
-            'cooldown': '8秒'
-        },
-        '右键': {
-            'name': '泡泡盾',
-            'description': '选择一名玩家赋予泡泡盾，该玩家在三秒内处于无敌状态并在此期间获得100点属性强度。冷却8秒',
-            'cooldown': '8秒'
-        }
-    },
-    '星耀犊': {
-        '左键': {
-            'name': '音符治疗',
-            'description': '发射一枚音符，不会造成伤害，会穿过敌人，击中玩家时回复10+(星耀犊生命值上限的1%)点生命值。可以长按鼠标左键进行蓄力，至多2秒，蓄力后的音符造成的治疗量会提高（根据蓄力时间提高蓄力秒数*20点）。射击间隔1秒，弹容20发，换弹时间2秒。治疗可以暴击。',
-            'cooldown': '无'
-        },
-        'Q': {
-            'name': '聚合光束',
-            'description': '发射一道聚合光束，持续4秒。光束每0.3秒判定一次，对敌人造成400+(星耀犊生命值上限的10%)点伤害，对玩家治疗120点生命值。基础暴击率50%，可叠加角色暴击率。暴击时光束宽度45，非暴击35。激活期间每秒恢复50生命值。充能：每秒1%，每次左键治疗命中玩家+2%，音爆触发+2%',
-            'cooldown': '充能制（100%）'
-        },
-        'E': {
-            'name': '强化增幅',
-            'description': '激活后持续10秒，期间星耀犊获得200点属性强度和20%治疗加成。冷却8秒',
-            'cooldown': '8秒'
-        },
-        '右键': {
-            'name': '尖刺发射',
-            'description': '按住右键持续发射尖刺，每0.075秒发射一枚，伤害50+（星耀犊攻击力）点。最多发射80枚后进入3秒冷却。尖刺命中敌人5次后触发音爆，造成300点伤害。',
-            'cooldown': '3秒（发射80枚后）'
-        }
-    }
 }
 
 # 检测套装
@@ -458,97 +335,19 @@ def generate_random_equipment():
     
     return equipment
 
-def init_user_characters():
-    """初始化用户的角色数据"""
-    characters = {}
-    for char_name in CHARACTERS:
-        # 设置默认值
-        if char_name == '勇者':
-            # 勇者的默认面板
-            default_stats = {
-                'attack': 53,
-                'critRate': 0.20,  # 20%
-                'critDamage': 1.0,  # 100%
-                'reloadReduction': 0.2,  # 0.2秒
-                'rapidFire': 0.0,  # 0秒
-                'extraAmmo': 0.0,  # 0%
-                'attributePower': 100,  # 属性强度100
-                'hp': 1000  # 生命值1000
-            }
-        elif char_name == '星耀犊':
-            # 星耀犊的默认面板
-            default_stats = {
-                'attack': 0,
-                'critRate': 0.30,  # 30%
-                'critDamage': 1.5,  # 150%
-                'reloadReduction': 0.0,
-                'rapidFire': 0.0,  # 0秒
-                'extraAmmo': 0.0,  # 0%
-                'attributePower': 0,  # 默认属性强度0
-                'hp': 1500  # 生命值1500
-            }
-        elif char_name == '公主蓉':
-            # 公主蓉的默认面板
-            default_stats = {
-                'attack': 32,
-                'critRate': 0.0,  # 0%（被动会根据治疗加成增加）
-                'critDamage': 1.0,  # 100%
-                'reloadReduction': 0.0,
-                'rapidFire': 0.0,
-                'extraAmmo': 0.0,
-                'attributePower': 0,
-                'hp': 2000,  # 生命值2000
-                'healingBonus': 0.20,  # 治疗加成20%
-                'damageBonus': 0.20  # 伤害加成20%
-            }
-        elif char_name == '幺幺俊羊羊':
-            # 幺幺俊羊羊的默认面板
-            default_stats = {
-                'attack': 48,
-                'critRate': 0.15,  # 15%
-                'critDamage': 1.0,  # 100%
-                'reloadReduction': 0.0,
-                'rapidFire': 0.0,
-                'extraAmmo': 0.0,
-                'attributePower': 100,  # 属性强度100
-                'hp': 1200,  # 生命值1200
-                'damageBonus': 0.20  # 伤害加成20%
-            }
-        elif char_name == '王子栗':
-            # 王子栗的默认面板
-            default_stats = {
-                'attack': 49,
-                'critRate': 0.50,  # 50%
-                'critDamage': 1.0,  # 100%
-                'reloadReduction': 0.0,
-                'rapidFire': 0.0,
-                'extraAmmo': 0.0,
-                'attributePower': 0,  # 默认属性强度0（被动会转换属性）
-                'hp': 1000  # 生命值1000
-            }
-        else:
-            # 其他角色默认值
-            default_stats = {
-                'attack': 0,
-                'critRate': 0,
-                'critDamage': 1.0,  # 默认100%暴击伤害
-                'reloadReduction': 0.0,
-                'rapidFire': 0.0,
-                'extraAmmo': 0.0,
-                'attributePower': 0,  # 默认属性强度0
-                'hp': 1000  # 生命值1000
-            }
-        
-        characters[char_name] = {
-            'equipment': {
-                'weapon': None,  # 执器
-                'accessory': None,  # 挂坠
-                'headwear': None  # 头饰
-            },
-            'stats': default_stats,
-            'attribute': CHARACTER_ATTRIBUTES.get(char_name, '无属性')  # 角色属性
-        }
-    return characters
+def create_character_instances():
+    instances = {}
+    for name in CHARACTERS:
+        cls = CHARACTER_CLASS_MAP.get(name)
+        if not cls:
+            continue
+        instances[name] = cls.create()
+    return instances
+
+CHARACTER_INSTANCES = create_character_instances()
+
+def get_character_instance(name: str) -> Character:
+    return CHARACTER_INSTANCES.get(name)
 
 def generate_room_key():
     """生成6位随机房间密钥"""
@@ -1602,9 +1401,29 @@ def handle_activate_q_skill(data):
     if 'game_state' not in room or request.sid not in room['game_state']['players']:
         return
     
-    if skill_type == 'prince_recreation':
-        # 王子栗Q技能：再创世
-        player = room['game_state']['players'][request.sid]
+    # 服务端驱动：根据角色子类的 skill_q 统一触发
+    player = room['game_state']['players'][request.sid]
+    character_name = player.get('avatar', {}).get('character', '未知')
+    inst = get_character_instance(character_name)
+    try:
+        payload = inst.skill_q()
+    except Exception as e:
+        emit('error', {'message': str(e)})
+        return
+    if payload.get('event') == 'activate_q_skill' and payload.get('skill_type') == 'princess_aura':
+        if 'q_skills' not in room['game_state']:
+            room['game_state']['q_skills'] = {}
+        room['game_state']['q_skills'][request.sid] = {
+            'x': player.get('x', 0),
+            'y': player.get('y', 0),
+            'radius': 400,
+            'start_time': time.time(),
+            'duration': 8.0,
+            'last_heal_time': time.time(),
+            'last_damage_time': time.time()
+        }
+        socketio.emit('activate_q_skill', {'playerId': request.sid, 'skill': 'princess_aura'}, room=room_key)
+    elif payload.get('event') == 'activate_q_skill' and payload.get('skill_type') == 'prince_recreation':
         if 'q_skills' not in room['game_state']:
             room['game_state']['q_skills'] = {}
         room['game_state']['q_skills'][request.sid] = {
@@ -1618,29 +1437,7 @@ def handle_activate_q_skill(data):
             'max_damages': 5,
             'last_damage_time': 0
         }
-        # 通知所有客户端激活神人模式
-        socketio.emit('divine_mode_start', {
-            'playerId': request.sid,
-            'x': player.get('x', 0),
-            'y': player.get('y', 0)
-        }, room=room_key)
-        print(f"⚡ 王子栗激活Q技能: {request.sid}, 位置: ({player.get('x', 0)}, {player.get('y', 0)})")
-    elif skill_type == 'princess_aura':
-        # 初始化Q技能光环
-        if 'q_skills' not in room['game_state']:
-            room['game_state']['q_skills'] = {}
-        
-        player = room['game_state']['players'][request.sid]
-        room['game_state']['q_skills'][request.sid] = {
-            'x': player.get('x', 0),
-            'y': player.get('y', 0),
-            'radius': 400,  # 800*800范围，半径400
-            'start_time': time.time(),
-            'duration': 8.0,
-            'last_heal_time': time.time(),
-            'last_damage_time': time.time()
-        }
-        print(f"🌸 公主蓉激活Q技能: {request.sid}, 位置: ({player.get('x', 0)}, {player.get('y', 0)})")
+        socketio.emit('divine_mode_start', {'playerId': request.sid, 'x': player.get('x', 0), 'y': player.get('y', 0)}, room=room_key)
 
 @socketio.on('revive_teammate')
 def handle_revive_teammate(data):
@@ -1882,7 +1679,7 @@ def handle_apply_bubble_shield(data):
     """赋予泡泡盾（幺幺俊羊羊右键）"""
     room_key = data.get('room_key')
     target_id = data.get('targetId')
-    owner_attack = data.get('ownerAttack', 0)  # 幺幺俊羊羊的攻击力
+    owner_attack = data.get('ownerAttack', 0)
     
     if room_key not in rooms:
         return
@@ -2116,10 +1913,8 @@ def handle_player_shoot(data):
     if bullet.get('isHealing', False):
         print(f"🎵 音符子弹创建: 治疗量={bullet.get('healing', 0)}, 是否暴击={bullet.get('isCrit')} (类型: {type(bullet.get('isCrit'))}), 目标ID={bullet.get('targetId', None)}")
     
-    # 添加到游戏状态
+    # 服务端技能驱动：若来自角色统一接口的弹药，则直接广播
     room['game_state']['bullets'].append(bullet)
-    
-    # 广播给所有玩家（包括射击者）
     socketio.emit('player_shot', {'bullet': bullet}, room=room_key)
 
 @socketio.on('player_hit')

@@ -6,7 +6,8 @@ auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    from main import load_user_data, init_user_characters, generate_random_equipment, save_user_data
+    from db import load_all_users, save_all_users
+    from main import generate_random_equipment, CHARACTERS, CHARACTER_ATTRIBUTES, get_character_instance
 
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '').strip()
@@ -14,12 +15,31 @@ def register():
         flash('用户名和密码不能为空', 'error')
         return redirect(url_for('index'))
 
-    users = load_user_data()
+    users = load_all_users()
     if username in users:
         flash('用户名已存在', 'error')
         return redirect(url_for('index'))
 
-    characters = init_user_characters()
+    characters = {}
+    for name in CHARACTERS:
+        inst = get_character_instance(name)
+        stats = {
+            'attack': int(getattr(inst, 'attack', 0)),
+            'hp': int(getattr(inst, 'hp', 1000)),
+            'critRate': float(getattr(inst, 'critRate', 0.0)),
+            'critDamage': float(getattr(inst, 'critDamage', 1.0)),
+            'reloadReduction': float(getattr(inst, 'reloadReduction', 0.0)),
+            'rapidFire': float(getattr(inst, 'rapidFire', 0.0)),
+            'extraAmmo': float(getattr(inst, 'extraAmmo', 0.0)),
+            'attributePower': int(getattr(inst, 'attributePower', 0)),
+            'damageBonus': 0.0,
+            'healingBonus': 0.0,
+        }
+        characters[name] = {
+            'stats': stats,
+            'equipment': {},
+            'attribute': CHARACTER_ATTRIBUTES.get(name, '无属性')
+        }
     initial_equipment = []
     slots = ['weapon', 'accessory', 'headwear']
     for slot in slots:
@@ -42,7 +62,7 @@ def register():
         'has_received_welcome_reward': False
     }
 
-    if save_user_data(users):
+    if save_all_users(users):
         flash('注册成功，请登录', 'success')
     else:
         flash('注册失败，请重试', 'error')
@@ -50,7 +70,8 @@ def register():
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    from main import load_user_data, init_user_characters, generate_random_equipment, save_user_data
+    from db import load_all_users, save_all_users
+    from main import generate_random_equipment, CHARACTERS, CHARACTER_ATTRIBUTES, get_character_instance
 
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '').strip()
@@ -58,7 +79,7 @@ def login():
         flash('用户名和密码不能为空', 'error')
         return redirect(url_for('index'))
 
-    users = load_user_data()
+    users = load_all_users()
     if username not in users:
         flash('用户名或密码错误', 'error')
         return redirect(url_for('index'))
@@ -67,11 +88,31 @@ def login():
         return redirect(url_for('index'))
 
     if 'characters' not in users[username]:
-        users[username]['characters'] = init_user_characters()
-        save_user_data(users)
+        chars = {}
+        for name in CHARACTERS:
+            inst = get_character_instance(name)
+            stats = {
+                'attack': int(getattr(inst, 'attack', 0)),
+                'hp': int(getattr(inst, 'hp', 1000)),
+                'critRate': float(getattr(inst, 'critRate', 0.0)),
+                'critDamage': float(getattr(inst, 'critDamage', 1.0)),
+                'reloadReduction': float(getattr(inst, 'reloadReduction', 0.0)),
+                'rapidFire': float(getattr(inst, 'rapidFire', 0.0)),
+                'extraAmmo': float(getattr(inst, 'extraAmmo', 0.0)),
+                'attributePower': int(getattr(inst, 'attributePower', 0)),
+                'damageBonus': 0.0,
+                'healingBonus': 0.0,
+            }
+            chars[name] = {
+                'stats': stats,
+                'equipment': {},
+                'attribute': CHARACTER_ATTRIBUTES.get(name, '无属性')
+            }
+        users[username]['characters'] = chars
+        save_all_users(users)
     if 'equipment' not in users[username]:
         users[username]['equipment'] = []
-        save_user_data(users)
+        save_all_users(users)
     if 'weapons' not in users[username]:
         users[username]['weapons'] = []
     if 'refinement_material' not in users[username]:
@@ -91,7 +132,7 @@ def login():
         users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 30
         users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 20
         users[username]['has_received_welcome_reward'] = True
-        save_user_data(users)
+        save_all_users(users)
         flash('欢迎奖励：获得30个叠志精心料和20个神兵许愿单！', 'success')
 
     today = datetime.date.today().isoformat()
@@ -104,7 +145,7 @@ def login():
         users[username]['refinement_material'] = users[username].get('refinement_material', 0) + 15
         users[username]['wish_ticket'] = users[username].get('wish_ticket', 0) + 5
         users[username]['last_login_date'] = today
-        save_user_data(users)
+        save_all_users(users)
         flash('每日登录奖励：获得15个叠志精心料、5个神兵许愿单和1件随机装备！', 'success')
 
     session['user_id'] = username

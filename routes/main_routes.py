@@ -5,26 +5,24 @@ main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/', endpoint='index')
 def index():
-    from main import CHARACTER_SKILLS, CHARACTERS, CHARACTER_ATTRIBUTES, load_user_data, init_user_characters, save_user_data
+    from main import CHARACTERS, CHARACTER_ATTRIBUTES
+    from domain.characters import CHARACTER_CLASS_MAP
+    from db import load_all_users
+    CHARACTER_SKILLS = {name: getattr(cls, 'skill_config', {}) for name, cls in CHARACTER_CLASS_MAP.items()}
     is_logged_in = session.get('user_id') is not None
-    username = session.get('username', '')
+    username = session.get('user_id', '')
 
     user_characters = None
     if is_logged_in:
-        users = load_user_data()
-        if username in users and 'characters' in users[username]:
+        users = load_all_users()
+        if username in users:
             user_characters = users[username]['characters']
-        else:
-            if username in users:
-                users[username]['characters'] = init_user_characters()
-                save_user_data(users)
-                user_characters = users[username]['characters']
 
     user_equipment = []
     refinement_material = 0
     wish_ticket = 0
     if is_logged_in:
-        users = load_user_data()
+        users = load_all_users()
         if username in users:
             if 'equipment' in users[username]:
                 user_equipment = users[username]['equipment']
@@ -33,7 +31,7 @@ def index():
 
     user_weapons = []
     if is_logged_in:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'weapons' in users[username]:
             user_weapons = users[username]['weapons']
 

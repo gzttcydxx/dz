@@ -73,7 +73,8 @@ def lobby(room_key):
 @room_bp.route('/game/<room_key>')
 def game(room_key):
     from state import rooms
-    from main import load_user_data, calculate_equipment_stats_server
+    from db import load_all_users
+    from main import calculate_equipment_stats_server
 
     if room_key not in rooms:
         return "房间不存在", 404
@@ -90,7 +91,7 @@ def game(room_key):
 
     user_character_data = None
     if username:
-        users = load_user_data()
+        users = load_all_users()
         if username in users and 'characters' in users[username]:
             character_name = player_avatar.get('character', '勇者')
             if character_name in users[username]['characters']:
