@@ -22,21 +22,22 @@ class Character(ABC):
     attributePower: int = 0
     hp: float = 1000.0
 
-    current_ammo: int = 0
-    ammo_capacity: int = 0
-    reload_time: float = 0.0
+    left_active_end: float = 0.0
     left_click_interval: float = 0.0
-    last_reload_start: float = 0.0
-    last_left_click_time: float = 0.0
+    left_type
     e_active_end: float = 0.0
     e_cooldown_end: float = 0.0
+    right_active_end: float = 0.0
     right_click_cooldown_end: float = 0.0
     q_charge: int = 0
     q_max_charge: int = 100
-    burst_shots: int = 1
-    burst_interval: float = 0.0
-    spike_count: int = 0
-    spike_limit: int = 80
+    q_active_end: float = 0.0
+
+    current_ammo: int = 0
+    ammo_capacity: int = 0
+    reload_time: float = 0.0
+    last_reload_start: float = 0.0
+    last_left_click_time: float = 0.0
 
     skill_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
@@ -45,8 +46,6 @@ class Character(ABC):
         self.ammo_capacity = 0
         self.reload_time = 0.0
         self.left_click_interval = 0.0
-        self.burst_shots = 1
-        self.burst_interval = 0.0
 
     def _now(self, now: Optional[float]) -> float:
         return time.time() if now is None else now
@@ -222,8 +221,9 @@ class GongZhuRong(Character):
         self.current_ammo = self.ammo_capacity
         self.reload_time = 2.1
         self.left_click_interval = 1.0
+
         self.burst_shots = 4
-        self.burst_interval = 0.0
+
         self.skill_config = {
             '左键': {
                 'name': '四连发射击',
@@ -473,6 +473,10 @@ class XingYaoDu(Character):
         self.current_ammo = self.ammo_capacity
         self.reload_time = 2.0
         self.left_click_interval = 1.0
+
+        self.spike_count = 0
+        self.spike_limit = 80
+
         self.skill_config = {
             '左键': {
                 'name': '音符治疗',
